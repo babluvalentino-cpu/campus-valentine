@@ -9,7 +9,11 @@
 		"test": "vitest",
 		"cf-typegen": "wrangler types"
 	},
+	"dependencies": {
+		"jose": "^5.0.0"
+	},
 	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20241127.0",
 		"@cloudflare/vitest-pool-workers": "^0.8.19",
 		"typescript": "^5.5.2",
 		"vitest": "~3.2.0",
