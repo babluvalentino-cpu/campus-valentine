@@ -1,0 +1,8 @@
+name = "campus-valentine-api"
+main = "src/worker.ts"
+compatibility_date = "2025-02-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "campus-valentine-db"
+database_id = "7d550493-b752-4470-94bc-9f19517677de"
