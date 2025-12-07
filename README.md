@@ -5,5 +5,5 @@ Monorepo:
 - worker/   : Cloudflare Worker API + D1
 - db/       : schema.sql for D1
 
-Dev1 (Frontend): Aryan
-Dev2 (Backend): Adith
+Dev1 (Frontend): Royale
+Dev2 (Backend): AMM
