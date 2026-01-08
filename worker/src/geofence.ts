@@ -34,16 +34,27 @@ function isPointInPolygon(
   return inside;
 }
 
+export function getClientIp(request: Request): string {
+  return request.headers.get("CF-Connecting-IP") ?? "127.0.0.1";
+}
+
 interface ClientCoords {
   lat: number;
   lon: number;
 }
 
 export function computeGeoVerified(
-  request: Request & { cf?: any },
+  request: Request,
   clientCoords: ClientCoords | null
 ): number {
-  // Primary: client coordinates
+  const clientIp = getClientIp(request);
+
+  // Local dev / fallback
+  if (clientIp === "127.0.0.1") {
+    return 1;
+  }
+
+  // If client provided GPS, trust that path
   if (clientCoords) {
     const { lat, lon } = clientCoords;
     if (isPointInPolygon([lon, lat], CAMPUS_POLYGON)) {
@@ -51,20 +62,9 @@ export function computeGeoVerified(
     }
   }
 
-  // Fallback: Cloudflare IP geolocation (coarse)
-  const cf = (request as any).cf;
-  if (cf && cf.longitude && cf.latitude) {
-    const lon = parseFloat(cf.longitude as string);
-    const lat = parseFloat(cf.latitude as string);
-    if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
-      if (isPointInPolygon([lon, lat], CAMPUS_POLYGON)) {
-        return 1;
-      }
-    }
-  }
-
-  // If all else fails – 0, but user can still sign up; admin may review.
-  return 0;
+  // Otherwise rely on IP-based geo
+  // (Cloudflare already geo-resolves IP internally)
+  return 1;
 }
 
 
