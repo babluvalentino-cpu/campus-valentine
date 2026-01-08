@@ -76,6 +76,31 @@ export default {
       return handleProfileUpdate(request, env);
     }
 
+    if (url.pathname === "/api/matches" && request.method === "GET") {
+      return handleGetMatches(request, env);
+    }
+
+    if (url.pathname.startsWith("/api/chat/") && url.pathname.endsWith("/end") && request.method === "POST") {
+      const matchId = url.pathname.split("/")[3];
+      return handleEndChat(request, env, matchId);
+    }
+
+    if (url.pathname === "/api/admin/users" && request.method === "GET") {
+      return handleAdminUsers(request, env);
+    }
+
+    if (url.pathname === "/api/admin/whitelist" && request.method === "POST") {
+      return handleAdminWhitelist(request, env);
+    }
+
+    if (url.pathname === "/api/admin/unmatch" && request.method === "POST") {
+      return handleAdminUnmatch(request, env);
+    }
+
+    if (url.pathname === "/api/admin/match" && request.method === "POST") {
+      return handleAdminMatch(request, env);
+    }
+
     if (url.pathname === "/api/admin/run-matching" && request.method === "POST") {
       return handleRunMatching(request, env);
     }
@@ -269,6 +294,7 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
     intent?: string;
     year?: number;
     residence?: string;
+    profileData?: any; // Full wizard data
   };
 
   try {
@@ -277,15 +303,20 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  const gender = (body.gender || "").trim();
-  const seeking = (body.seeking || "").trim();
-  const interests = Array.isArray(body.interests) ? body.interests : [];
-  const bio = (body.bio || "").trim();
+  // Extract from body or profileData
+  const gender = (body.gender || body.profileData?.gender || "").trim();
+  const seeking = (body.seeking || body.profileData?.seeking || "").trim();
+  const interests = Array.isArray(body.interests)
+    ? body.interests
+    : Array.isArray(body.profileData?.interests)
+    ? body.profileData.interests
+    : [];
+  const bio = (body.bio || body.profileData?.bio || "").trim();
 
   // Additional Phase-3 fields
-  const intent = (body.intent || "relationship").trim();
-  const year = Number(body.year || 1);
-  const residence = body.residence || null;
+  const intent = (body.intent || body.profileData?.intent || "relationship").trim();
+  const year = Number(body.year || body.profileData?.year || 1);
+  const residence = body.residence || body.profileData?.residence || null;
 
   // Validate gender
   if (!GENDER_OPTIONS.includes(gender as any)) {
@@ -317,11 +348,13 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
     return new Response("Bio too long.", { status: 400 });
   }
 
-  // Build profile_data JSON
-  const profileDataJson = JSON.stringify({
-    interests: normalizedInterests,
-    bio,
-  });
+  // Build profile_data JSON - store full wizard data if provided, otherwise just interests + bio
+  const profileDataJson = body.profileData
+    ? JSON.stringify(body.profileData)
+    : JSON.stringify({
+        interests: normalizedInterests,
+        bio,
+      });
 
   try {
     const result = await env.DB.prepare(
@@ -378,5 +411,292 @@ async function runMidnightMatcher(env: Env) {
     console.log("[CRON MATCHER]", result);
   } catch (err) {
     console.error("[CRON MATCHER ERROR]", err);
+  }
+}
+
+async function handleGetMatches(request: Request, env: Env): Promise<Response> {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  try {
+    // Get all matches for this user
+    const matches = await env.DB.prepare(
+      `SELECT m.id, m.created_at,
+              CASE 
+                WHEN m.user_a_id = ? THEN m.user_b_id
+                ELSE m.user_a_id
+              END as partner_id
+       FROM Matches m
+       WHERE (m.user_a_id = ? OR m.user_b_id = ?)
+         AND m.status = 'active'`
+    )
+      .bind(session.id, session.id, session.id)
+      .all<{ id: string; created_at: string; partner_id: string }>();
+
+    if (!matches.results || matches.results.length === 0) {
+      return new Response(JSON.stringify([]), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Get partner info and last message for each match
+    const matchData = await Promise.all(
+      matches.results.map(async (match) => {
+        const partner = await env.DB.prepare(
+          "SELECT id, username FROM Users WHERE id = ?"
+        )
+          .bind(match.partner_id)
+          .first<{ id: string; username: string }>();
+
+        const lastMessage = await env.DB.prepare(
+          `SELECT content, created_at
+           FROM Messages
+           WHERE match_id = ?
+           ORDER BY created_at DESC
+           LIMIT 1`
+        )
+          .bind(match.id)
+          .first<{ content: string; created_at: string } | null>();
+
+        return {
+          id: match.id,
+          partner: partner || { id: match.partner_id, username: "Unknown" },
+          last_message: lastMessage?.content || "No messages yet.",
+          last_message_at: lastMessage?.created_at || null,
+          unread_count: 0, // TODO: Implement unread tracking
+        };
+      })
+    );
+
+    return new Response(JSON.stringify(matchData), {
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("Get matches error:", err);
+    return new Response("Error fetching matches.", { status: 500 });
+  }
+}
+
+async function handleEndChat(request: Request, env: Env, matchId: string): Promise<Response> {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  try {
+    // Verify user is part of this match
+    const match = await env.DB.prepare(
+      "SELECT user_a_id, user_b_id FROM Matches WHERE id = ? AND status = 'active'"
+    )
+      .bind(matchId)
+      .first<{ user_a_id: string; user_b_id: string }>();
+
+    if (!match || (match.user_a_id !== session.id && match.user_b_id !== session.id)) {
+      return new Response("Match not found or unauthorized", { status: 404 });
+    }
+
+    // End the match
+    await env.DB.prepare(
+      "UPDATE Matches SET status = 'ended_by_user' WHERE id = ?"
+    )
+      .bind(matchId)
+      .run();
+
+    // Requeue both users
+    await env.DB.prepare(
+      "UPDATE Users SET status = 'requeuing' WHERE id IN (?, ?) AND status = 'matched'"
+    )
+      .bind(match.user_a_id, match.user_b_id)
+      .run();
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("End chat error:", err);
+    return new Response("Error ending chat.", { status: 500 });
+  }
+}
+
+function verifyAdminSecret(request: Request, env: Env): boolean {
+  const secret = request.headers.get("x-admin-secret");
+  return secret === env.ADMIN_SECRET;
+}
+
+async function handleAdminUsers(request: Request, env: Env): Promise<Response> {
+  if (!verifyAdminSecret(request, env)) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  try {
+    const users = await env.DB.prepare(
+      `SELECT id, username, gender, year, status, is_whitelisted, created_at
+       FROM Users
+       ORDER BY created_at DESC`
+    ).all<{
+      id: string;
+      username: string;
+      gender: string | null;
+      year: number | null;
+      status: string;
+      is_whitelisted: number;
+      created_at: string;
+    }>();
+
+    return new Response(JSON.stringify(users.results || []), {
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("Admin users error:", err);
+    return new Response("Error fetching users.", { status: 500 });
+  }
+}
+
+async function handleAdminWhitelist(request: Request, env: Env): Promise<Response> {
+  if (!verifyAdminSecret(request, env)) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  let body: { user_id: string; status: boolean };
+  try {
+    body = await request.json();
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  try {
+    await env.DB.prepare(
+      "UPDATE Users SET is_whitelisted = ? WHERE id = ?"
+    )
+      .bind(body.status ? 1 : 0, body.user_id)
+      .run();
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("Admin whitelist error:", err);
+    return new Response("Error updating whitelist.", { status: 500 });
+  }
+}
+
+async function handleAdminUnmatch(request: Request, env: Env): Promise<Response> {
+  if (!verifyAdminSecret(request, env)) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  let body: { user_id: string };
+  try {
+    body = await request.json();
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  try {
+    // Find active match for this user
+    const match = await env.DB.prepare(
+      `SELECT id, user_a_id, user_b_id
+       FROM Matches
+       WHERE (user_a_id = ? OR user_b_id = ?) AND status = 'active'
+       LIMIT 1`
+    )
+      .bind(body.user_id, body.user_id)
+      .first<{ id: string; user_a_id: string; user_b_id: string }>();
+
+    if (!match) {
+      return new Response("No active match found", { status: 404 });
+    }
+
+    // End the match
+    await env.DB.prepare(
+      "UPDATE Matches SET status = 'ended_by_admin' WHERE id = ?"
+    )
+      .bind(match.id)
+      .run();
+
+    // Requeue both users
+    await env.DB.prepare(
+      "UPDATE Users SET status = 'requeuing' WHERE id IN (?, ?) AND status = 'matched'"
+    )
+      .bind(match.user_a_id, match.user_b_id)
+      .run();
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("Admin unmatch error:", err);
+    return new Response("Error unmatching users.", { status: 500 });
+  }
+}
+
+async function handleAdminMatch(request: Request, env: Env): Promise<Response> {
+  if (!verifyAdminSecret(request, env)) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  let body: { user_a_id: string; user_b_id: string };
+  try {
+    body = await request.json();
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  try {
+    // Check if either user already has an active match
+    const existingA = await env.DB.prepare(
+      `SELECT id FROM Matches
+       WHERE (user_a_id = ? OR user_b_id = ?) AND status = 'active'
+       LIMIT 1`
+    )
+      .bind(body.user_a_id, body.user_a_id)
+      .first<{ id: string }>();
+
+    const existingB = await env.DB.prepare(
+      `SELECT id FROM Matches
+       WHERE (user_a_id = ? OR user_b_id = ?) AND status = 'active'
+       LIMIT 1`
+    )
+      .bind(body.user_b_id, body.user_b_id)
+      .first<{ id: string }>();
+
+    // Check if user B is whitelisted (can have multiple matches)
+    const userB = await env.DB.prepare(
+      "SELECT is_whitelisted FROM Users WHERE id = ?"
+    )
+      .bind(body.user_b_id)
+      .first<{ is_whitelisted: number }>();
+
+    if (existingA && !userB?.is_whitelisted) {
+      return new Response("User A already has an active match", { status: 409 });
+    }
+    if (existingB && !userB?.is_whitelisted) {
+      return new Response("User B already has an active match", { status: 409 });
+    }
+
+    // Create match
+    const matchId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO Matches (id, user_a_id, user_b_id)
+       VALUES (?, ?, ?)`
+    )
+      .bind(matchId, body.user_a_id, body.user_b_id)
+      .run();
+
+    // Update user statuses
+    await env.DB.prepare(
+      "UPDATE Users SET status = 'matched' WHERE id IN (?, ?) AND status IN ('pending_match', 'requeuing')"
+    )
+      .bind(body.user_a_id, body.user_b_id)
+      .run();
+
+    return new Response(JSON.stringify({ success: true, match_id: matchId }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("Admin match error:", err);
+    return new Response("Error creating match.", { status: 500 });
   }
 }

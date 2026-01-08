@@ -301,45 +301,47 @@ export async function runMatchingAlgorithm(db: D1Database): Promise<string> {
     }
   }
 
-  // --- PASS 2: Generic greedy matching among remaining users ---
-  const remaining: User[] = users.filter((u) => !takenUsers.has(u.id));
-  if (remaining.length >= 2) {
-    const candidates: CandidatePair[] = [];
+  // --- PASS 2: Match remaining users (split by gender to prevent same-gender matches) ---
+  const remainingFemales: User[] = [];
+  const remainingMales: User[] = [];
+  const remainingOthers: User[] = [];
 
-    // Build all possible pairs
-    for (let i = 0; i < remaining.length; i++) {
-      for (let j = i + 1; j < remaining.length; j++) {
-        const u1 = remaining[i];
-        const u2 = remaining[j];
+  for (const u of users) {
+    if (takenUsers.has(u.id)) continue;
+    if (u.gender === "female") remainingFemales.push(u);
+    else if (u.gender === "male") remainingMales.push(u);
+    else remainingOthers.push(u);
+  }
 
-        const score = calculatePairwiseScore(u1, u2);
-        if (score <= 0) continue;
+  // Match remaining females with remaining males
+  for (const female of remainingFemales) {
+    if (takenUsers.has(female.id)) continue;
 
-        candidates.push({
-          aIndex: i,
-          bIndex: j,
-          score,
-          aCreatedAt: u1.created_at,
-          bCreatedAt: u2.created_at,
-        });
+    let bestMale: User | null = null;
+    let bestScore = 0;
+    let bestTieBreaker: string | null = null;
+
+    for (const male of remainingMales) {
+      if (takenUsers.has(male.id)) continue;
+
+      const score = calculatePairwiseScore(female, male);
+      if (score <= 0) continue;
+
+      const tieKey = `${male.created_at}|${male.id}`;
+      if (
+        score > bestScore ||
+        (score === bestScore && bestMale && tieKey < bestTieBreaker!)
+      ) {
+        bestMale = male;
+        bestScore = score;
+        bestTieBreaker = tieKey;
       }
     }
 
-    // Sort by score desc, then by creation time for determinism
-    candidates.sort((x, y) => {
-      if (x.score !== y.score) return y.score - x.score;
-
-      const aCmp = x.aCreatedAt.localeCompare(y.aCreatedAt);
-      if (aCmp !== 0) return aCmp;
-
-      return x.bCreatedAt.localeCompare(y.bCreatedAt);
-    });
-
-    for (const cand of candidates) {
-      const u1 = remaining[cand.aIndex];
-      const u2 = remaining[cand.bIndex];
-
-      if (takenUsers.has(u1.id) || takenUsers.has(u2.id)) continue;
+    if (bestMale && bestScore > 0) {
+      if (takenUsers.has(bestMale.id) || takenUsers.has(female.id)) {
+        continue;
+      }
 
       const matchId = crypto.randomUUID();
       statements.push(
@@ -348,7 +350,7 @@ export async function runMatchingAlgorithm(db: D1Database): Promise<string> {
             `INSERT INTO Matches (id, user_a_id, user_b_id)
              VALUES (?, ?, ?)`
           )
-          .bind(matchId, u1.id, u2.id)
+          .bind(matchId, female.id, bestMale.id)
       );
 
       statements.push(
@@ -358,7 +360,7 @@ export async function runMatchingAlgorithm(db: D1Database): Promise<string> {
              SET status = 'matched'
              WHERE id = ? AND status IN ('pending_match', 'requeuing')`
           )
-          .bind(u1.id)
+          .bind(female.id)
       );
       statements.push(
         db
@@ -367,11 +369,11 @@ export async function runMatchingAlgorithm(db: D1Database): Promise<string> {
              SET status = 'matched'
              WHERE id = ? AND status IN ('pending_match', 'requeuing')`
           )
-          .bind(u2.id)
+          .bind(bestMale.id)
       );
 
-      takenUsers.add(u1.id);
-      takenUsers.add(u2.id);
+      takenUsers.add(female.id);
+      takenUsers.add(bestMale.id);
       matchesCreated++;
     }
   }
