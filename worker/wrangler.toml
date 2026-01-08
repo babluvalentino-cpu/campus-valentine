@@ -1,6 +1,10 @@
-name = "campus-valentine-api"
+name = "campus-valentine-backend"
 main = "src/worker.ts"
 compatibility_date = "2025-02-01"
+keep_vars = true
+
+[triggers]
+crons = ["0 0 * * *"] # runs daily at midnight UTC
 
 [[d1_databases]]
 binding = "DB"
