@@ -1,7 +1,15 @@
 // src/worker.ts
-import { Env, hashPassword, verifyPassword, createSessionToken, createAuthCookie, verifySession } from "./auth";
+import {
+  Env,
+  hashPassword,
+  verifyPassword,
+  createSessionToken,
+  createAuthCookie,
+  verifySession,
+} from "./auth";
 import { verifyTurnstileToken } from "./turnstile";
 import { computeGeoVerified } from "./geofence";
+import { runMatchingAlgorithm } from "./matchingAlgorithm";
 
 interface SignupBody {
   username: string;
@@ -15,6 +23,32 @@ interface LoginBody {
   username: string;
   password: string;
 }
+
+interface ProfileBody {
+  gender: string;
+  seeking: string;
+  interests: string[];
+  bio?: string;
+}
+
+const GENDER_OPTIONS = ["male", "female", "other"] as const;
+const SEEKING_OPTIONS = ["male", "female", "other", "all"] as const;
+
+// Must match frontend INTEREST_OPTIONS
+const INTEREST_OPTIONS = [
+  "music",
+  "movies",
+  "coding",
+  "gaming",
+  "sports",
+  "art",
+  "books",
+  "travel",
+  "fitness",
+  "food",
+] as const;
+
+const INTEREST_SET = new Set(INTEREST_OPTIONS);
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -38,7 +72,19 @@ export default {
       return handleMe(request, env);
     }
 
+    if (url.pathname === "/api/profile" && request.method === "POST") {
+      return handleProfileUpdate(request, env);
+    }
+
+    if (url.pathname === "/api/admin/run-matching" && request.method === "POST") {
+      return handleRunMatching(request, env);
+    }
+
     return new Response("Not found", { status: 404 });
+  },
+
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(runMidnightMatcher(env));
   },
 };
 
@@ -72,18 +118,20 @@ async function handleSignup(request: Request, env: Env): Promise<Response> {
     request.headers.get("x-forwarded-for") ||
     "";
 
+  // CAPTCHA check
   const isHuman = await verifyTurnstileToken(turnstileToken, env, ip);
   if (!isHuman) {
     return new Response("CAPTCHA verification failed.", { status: 403 });
   }
 
+  // Geo verification
   const geoVerified = computeGeoVerified(request, clientCoords);
 
   const passwordHash = await hashPassword(password);
   const userId = crypto.randomUUID();
 
   try {
-    // Enforce unique username and fingerprint
+    // Prevent duplicate device or username
     const existing = await env.DB.prepare(
       "SELECT id FROM Users WHERE username = ? OR fingerprint_hash = ?"
     )
@@ -94,25 +142,38 @@ async function handleSignup(request: Request, env: Env): Promise<Response> {
       return new Response("Username or device already registered.", { status: 409 });
     }
 
+    // ✅ PHASE-3 INSERT (all required fields)
     await env.DB.prepare(
-      `INSERT INTO Users (id, username, password_hash, fingerprint_hash, geo_verified)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO Users (
+        id, username, password_hash, fingerprint_hash,
+        intent, year, residence, profile_data, bio,
+        status, geo_verified, is_whitelisted, is_admin
+      )
+      VALUES (?, ?, ?, ?, 'relationship', 1, NULL, '{}', '',
+              'pending_profile', ?, 0, 0)`
     )
       .bind(userId, username, passwordHash, fingerprintHash, geoVerified)
       .run();
 
+    // Create session cookie
     const token = await createSessionToken(env, { id: userId, isAdmin: false });
     const headers = new Headers({
       "Content-Type": "application/json",
       "Set-Cookie": createAuthCookie(token),
     });
 
-    return new Response(JSON.stringify({ id: userId, username, geo_verified: geoVerified }), {
+    return new Response(
+      JSON.stringify({
+        id: userId,
+        username,
+        geo_verified: geoVerified,
+      }),
+      {
       status: 201,
       headers,
-    });
+      }
+    );
   } catch (err: any) {
-    // Note: D1 error message varies; we already manually checked uniqueness.
     console.error("Signup error:", err);
     return new Response("Error creating account.", { status: 500 });
   }
@@ -196,4 +257,126 @@ async function handleMe(request: Request, env: Env): Promise<Response> {
       headers: { "Content-Type": "application/json" },
     }
   );
+}
+
+async function handleProfileUpdate(request: Request, env: Env): Promise<Response> {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  let body: ProfileBody & {
+    intent?: string;
+    year?: number;
+    residence?: string;
+  };
+
+  try {
+    body = await request.json();
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  const gender = (body.gender || "").trim();
+  const seeking = (body.seeking || "").trim();
+  const interests = Array.isArray(body.interests) ? body.interests : [];
+  const bio = (body.bio || "").trim();
+
+  // Additional Phase-3 fields
+  const intent = (body.intent || "relationship").trim();
+  const year = Number(body.year || 1);
+  const residence = body.residence || null;
+
+  // Validate gender
+  if (!GENDER_OPTIONS.includes(gender as any)) {
+    return new Response("Invalid gender.", { status: 400 });
+  }
+
+  // Validate seeking
+  if (!SEEKING_OPTIONS.includes(seeking as any)) {
+    return new Response("Invalid seeking preference.", { status: 400 });
+  }
+
+  // Validate interests
+  if (interests.length === 0) {
+    return new Response("At least one interest is required.", { status: 400 });
+  }
+
+  const normalizedInterests: string[] = [];
+  for (const raw of interests) {
+    const val = String(raw).trim();
+    if (!INTEREST_SET.has(val as any)) {
+      return new Response("Invalid interest value.", { status: 400 });
+    }
+    if (!normalizedInterests.includes(val)) {
+      normalizedInterests.push(val);
+    }
+  }
+
+  if (bio.length > 200) {
+    return new Response("Bio too long.", { status: 400 });
+  }
+
+  // Build profile_data JSON
+  const profileDataJson = JSON.stringify({
+    interests: normalizedInterests,
+    bio,
+  });
+
+  try {
+    const result = await env.DB.prepare(
+      `UPDATE Users
+       SET gender = ?, seeking = ?, intent = ?, year = ?, residence = ?,
+           profile_data = ?, bio = ?, status = 'pending_match'
+       WHERE id = ? AND status = 'pending_profile'`
+    )
+      .bind(
+        gender,
+        seeking,
+        intent,
+        year,
+        residence,
+        profileDataJson,
+        bio,
+        session.id
+      )
+      .run();
+
+    const updated =
+      result.meta && "changes" in result.meta ? result.meta.changes : 0;
+
+    if (!updated) {
+      return new Response("Profile cannot be updated in current state.", {
+        status: 409,
+      });
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("Profile update error:", err);
+    return new Response("Error updating profile.", { status: 500 });
+  }
+}
+
+async function handleRunMatching(request: Request, env: Env): Promise<Response> {
+  const session = await verifySession(request, env);
+  if (!session || !session.isAdmin) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  const result = await runMatchingAlgorithm(env.DB);
+  return new Response(JSON.stringify({ result }), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+async function runMidnightMatcher(env: Env) {
+  try {
+    const result = await runMatchingAlgorithm(env.DB);
+    console.log("[CRON MATCHER]", result);
+  } catch (err) {
+    console.error("[CRON MATCHER ERROR]", err);
+  }
 }
