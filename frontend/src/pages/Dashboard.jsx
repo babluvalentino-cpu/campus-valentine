@@ -44,7 +44,7 @@ export function Dashboard() {
       }
     }
 
-    load();
+    load();                               
   }, [navigate]);
 
   async function handleLogout() {
