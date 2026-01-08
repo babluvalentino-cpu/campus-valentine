@@ -5,6 +5,7 @@ import {
   verifyPassword,
   createSessionToken,
   createAuthCookie,
+  clearAuthCookie,
   verifySession,
 } from "./auth";
 import { verifyTurnstileToken } from "./turnstile";
@@ -103,6 +104,23 @@ export default {
 
     if (url.pathname === "/api/admin/run-matching" && request.method === "POST") {
       return handleRunMatching(request, env);
+    }
+
+    if (url.pathname === "/api/logout" && request.method === "POST") {
+      return handleLogout(request, env);
+    }
+
+    if (url.pathname.startsWith("/api/chat/") && request.method === "GET") {
+      const matchId = url.pathname.split("/")[3];
+      return handleGetMessages(request, env, matchId);
+    }
+
+    if (url.pathname.startsWith("/api/chat/") && request.method === "POST") {
+      const matchId = url.pathname.split("/")[3];
+      if (url.pathname.endsWith("/end")) {
+        return handleEndChat(request, env, matchId);
+      }
+      return handleSendMessage(request, env, matchId);
     }
 
     return new Response("Not found", { status: 404 });
@@ -376,6 +394,117 @@ async function runMidnightMatcher(env: Env) {
     console.log("[CRON MATCHER]", result);
   } catch (err) {
     console.error("[CRON MATCHER ERROR]", err);
+  }
+}
+
+async function handleLogout(request: Request, env: Env): Promise<Response> {
+  const headers = new Headers({
+    "Content-Type": "application/json",
+    "Set-Cookie": clearAuthCookie(),
+  });
+
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers,
+  });
+}
+
+async function handleGetMessages(request: Request, env: Env, matchId: string): Promise<Response> {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  try {
+    // Verify user is part of this match
+    const match = await env.DB.prepare(
+      "SELECT user_a_id, user_b_id FROM Matches WHERE id = ? AND status = 'active'"
+    )
+      .bind(matchId)
+      .first<{ user_a_id: string; user_b_id: string }>();
+
+    if (!match || (match.user_a_id !== session.id && match.user_b_id !== session.id)) {
+      return new Response("Match not found or unauthorized", { status: 404 });
+    }
+
+    // Get all messages for this match
+    const messages = await env.DB.prepare(
+      `SELECT id, sender_id, content, created_at
+       FROM Messages
+       WHERE match_id = ?
+       ORDER BY created_at ASC`
+    )
+      .bind(matchId)
+      .all<{ id: string; sender_id: string; content: string; created_at: string }>();
+
+    return new Response(JSON.stringify(messages.results || []), {
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("Get messages error:", err);
+    return new Response("Error fetching messages.", { status: 500 });
+  }
+}
+
+async function handleSendMessage(request: Request, env: Env, matchId: string): Promise<Response> {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  let body: { content: string };
+  try {
+    body = await request.json();
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  const content = (body.content || "").trim();
+  if (!content || content.length === 0) {
+    return new Response("Message content is required.", { status: 400 });
+  }
+
+  if (content.length > 1000) {
+    return new Response("Message too long.", { status: 400 });
+  }
+
+  try {
+    // Verify user is part of this match
+    const match = await env.DB.prepare(
+      "SELECT user_a_id, user_b_id FROM Matches WHERE id = ? AND status = 'active'"
+    )
+      .bind(matchId)
+      .first<{ user_a_id: string; user_b_id: string }>();
+
+    if (!match || (match.user_a_id !== session.id && match.user_b_id !== session.id)) {
+      return new Response("Match not found or unauthorized", { status: 404 });
+    }
+
+    // Create message
+    const messageId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO Messages (id, match_id, sender_id, content)
+       VALUES (?, ?, ?, ?)`
+    )
+      .bind(messageId, matchId, session.id, content)
+      .run();
+
+    return new Response(
+      JSON.stringify({
+        id: messageId,
+        match_id: matchId,
+        sender_id: session.id,
+        content,
+        created_at: new Date().toISOString(),
+      }),
+      {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  } catch (err) {
+    console.error("Send message error:", err);
+    return new Response("Error sending message.", { status: 500 });
   }
 }
 

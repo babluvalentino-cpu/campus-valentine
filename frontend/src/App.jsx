@@ -5,7 +5,8 @@ import { Signup } from "./pages/Signup";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { Admin } from "./pages/Admin";
-import { ProfileSetup } from "./pages/ProfileSetup"; // <--- Added Import
+import { ProfileSetup } from "./pages/ProfileSetup";
+import { Chat } from "./pages/Chat";
 
 function App() {
   return (
@@ -14,9 +15,9 @@ function App() {
         <Route path="/" element={<Landing />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/login" element={<Login />} />
-        {/* Added the Wizard Route 👇 */}
-        <Route path="/profile-setup" element={<ProfileSetup />} /> 
+        <Route path="/profile-setup" element={<ProfileSetup />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/chat/:matchId" element={<Chat />} />
         <Route path="/admin" element={<Admin />} />
       </Routes>
     </BrowserRouter>

@@ -57,6 +57,10 @@ export function ProfileWizard({ onComplete }) {
   const [error, setError] = useState("");
 
   const [data, setData] = useState({
+    // Step 0 (Required for matching)
+    gender: "", // 'male' | 'female' | 'other'
+    seeking: "", // 'male' | 'female' | 'other' | 'all'
+    
     // Step 1
     intent: "", // 'relationship' | 'friendship'
     year: "", // "1".."5"
@@ -114,7 +118,10 @@ export function ProfileWizard({ onComplete }) {
 
   function validateStep(currentStep) {
     // Basic validation per step
-    if (currentStep === 1) {
+    if (currentStep === 0) {
+      if (!data.gender) return "Please select your gender.";
+      if (!data.seeking) return "Please select who you're seeking.";
+    } else if (currentStep === 1) {
       if (!isRelationship && !isFriendship) {
         return "Please select what you're looking for.";
       }
@@ -151,7 +158,9 @@ export function ProfileWizard({ onComplete }) {
     }
     setError("");
 
-    if (step === 3 && isFriendship) {
+    if (step === 0) {
+      setStep(1);
+    } else if (step === 3 && isFriendship) {
       setStep(5); // skip Step 4 for friendship
     } else if (step < 5) {
       setStep(step + 1);
@@ -162,7 +171,9 @@ export function ProfileWizard({ onComplete }) {
     setError("");
     if (step === 5 && isFriendship) {
       setStep(3); // skip Step 4 for friendship
-    } else if (step > 1) {
+    } else if (step === 1) {
+      setStep(0);
+    } else if (step > 0) {
       setStep(step - 1);
     }
   }
@@ -176,6 +187,8 @@ export function ProfileWizard({ onComplete }) {
     setError("");
 
     const finalData = {
+      gender: data.gender,
+      seeking: data.seeking,
       intent: data.intent === "relationship" ? "relationship" : "friendship",
       year: parseInt(String(data.year), 10),
       residence: data.residence,
@@ -205,6 +218,10 @@ export function ProfileWizard({ onComplete }) {
 
   function renderStep() {
     switch (step) {
+      case 0:
+        return (
+          <Step0GenderSeeking data={data} update={update} />
+        );
       case 1:
         return (
           <Step1Basics data={data} update={update} />
@@ -236,7 +253,9 @@ export function ProfileWizard({ onComplete }) {
   }
 
   const stepLabel =
-    step === 1
+    step === 0
+      ? "Step 0 · Gender & Seeking"
+      : step === 1
       ? "Step 1 · Basics"
       : step === 2
       ? "Step 2 · Vibe"
@@ -246,7 +265,7 @@ export function ProfileWizard({ onComplete }) {
       ? "Step 4 · Dating Style"
       : "Step 5 · Preferences";
 
-  const showBack = step > 1;
+  const showBack = step > 0;
   const showNext = step < 5 && !(step === 3 && isFriendship);
   const showFinish = step === 5 || (step === 3 && isFriendship);
 
@@ -255,7 +274,7 @@ export function ProfileWizard({ onComplete }) {
       <div className="mb-4">
         <p className="text-xs text-slate-400 mb-1">{stepLabel}</p>
         <div className="flex gap-1">
-          {[1, 2, 3, 4, 5].map((n) => (
+          {[0, 1, 2, 3, 4, 5].map((n) => (
             <div
               key={n}
               className={
@@ -312,6 +331,66 @@ export function ProfileWizard({ onComplete }) {
 }
 
 /* === Step components === */
+
+function Step0GenderSeeking({ data, update }) {
+  return (
+    <div className="space-y-4 text-sm">
+      <div>
+        <p className="mb-1">Your gender?</p>
+        <div className="flex flex-wrap gap-3 text-xs">
+          <RadioPill
+            label="Male"
+            value="male"
+            checked={data.gender === "male"}
+            onChange={() => update("gender", "male")}
+          />
+          <RadioPill
+            label="Female"
+            value="female"
+            checked={data.gender === "female"}
+            onChange={() => update("gender", "female")}
+          />
+          <RadioPill
+            label="Other"
+            value="other"
+            checked={data.gender === "other"}
+            onChange={() => update("gender", "other")}
+          />
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-1">Seeking?</p>
+        <div className="flex flex-wrap gap-3 text-xs">
+          <RadioPill
+            label="Male"
+            value="male"
+            checked={data.seeking === "male"}
+            onChange={() => update("seeking", "male")}
+          />
+          <RadioPill
+            label="Female"
+            value="female"
+            checked={data.seeking === "female"}
+            onChange={() => update("seeking", "female")}
+          />
+          <RadioPill
+            label="Other"
+            value="other"
+            checked={data.seeking === "other"}
+            onChange={() => update("seeking", "other")}
+          />
+          <RadioPill
+            label="All"
+            value="all"
+            checked={data.seeking === "all"}
+            onChange={() => update("seeking", "all")}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Step1Basics({ data, update }) {
   return (
