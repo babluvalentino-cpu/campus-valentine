@@ -290,12 +290,7 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
     return new Response("Unauthorized", { status: 401 });
   }
 
-  let body: ProfileBody & {
-    intent?: string;
-    year?: number;
-    residence?: string;
-    profileData?: any; // Full wizard data
-  };
+  let body: any;
 
   try {
     body = await request.json();
@@ -303,74 +298,44 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  // Extract from body or profileData
-  const gender = (body.gender || body.profileData?.gender || "").trim();
-  const seeking = (body.seeking || body.profileData?.seeking || "").trim();
-  const interests = Array.isArray(body.interests)
-    ? body.interests
-    : Array.isArray(body.profileData?.interests)
-    ? body.profileData.interests
-    : [];
-  const bio = (body.bio || body.profileData?.bio || "").trim();
+  // Extract fields from wizard data (support both direct fields and profileData wrapper)
+  const wizardData = body.profileData || body;
+  const intent = wizardData.intent || "relationship";
+  const year = wizardData.year ? Number(wizardData.year) : null;
+  const bio = typeof wizardData.bio === "string" ? wizardData.bio.trim() : "";
+  const gender = wizardData.gender || null;
+  const seeking = wizardData.seeking || null;
+  const residence = wizardData.residence || null;
 
-  // Additional Phase-3 fields
-  const intent = (body.intent || body.profileData?.intent || "relationship").trim();
-  const year = Number(body.year || body.profileData?.year || 1);
-  const residence = body.residence || body.profileData?.residence || null;
-
-  // Validate gender
-  if (!GENDER_OPTIONS.includes(gender as any)) {
-    return new Response("Invalid gender.", { status: 400 });
-  }
-
-  // Validate seeking
-  if (!SEEKING_OPTIONS.includes(seeking as any)) {
-    return new Response("Invalid seeking preference.", { status: 400 });
-  }
-
-  // Validate interests
-  if (interests.length === 0) {
-    return new Response("At least one interest is required.", { status: 400 });
-  }
-
-  const normalizedInterests: string[] = [];
-  for (const raw of interests) {
-    const val = String(raw).trim();
-    if (!INTEREST_SET.has(val as any)) {
-      return new Response("Invalid interest value.", { status: 400 });
-    }
-    if (!normalizedInterests.includes(val)) {
-      normalizedInterests.push(val);
-    }
-  }
-
+  // Validate bio length
   if (bio.length > 200) {
     return new Response("Bio too long.", { status: 400 });
   }
 
-  // Build profile_data JSON - store full wizard data if provided, otherwise just interests + bio
-  const profileDataJson = body.profileData
-    ? JSON.stringify(body.profileData)
-    : JSON.stringify({
-        interests: normalizedInterests,
-        bio,
-      });
+  // Store full wizard data in profile_data JSON
+  const profileDataJson = JSON.stringify(wizardData);
 
   try {
     const result = await env.DB.prepare(
       `UPDATE Users
-       SET gender = ?, seeking = ?, intent = ?, year = ?, residence = ?,
-           profile_data = ?, bio = ?, status = 'pending_match'
+       SET intent = ?,
+           year = ?,
+           bio = ?,
+           gender = ?,
+           seeking = ?,
+           residence = ?,
+           profile_data = ?,
+           status = 'pending_match'
        WHERE id = ? AND status = 'pending_profile'`
     )
       .bind(
-        gender,
-        seeking,
         intent,
         year,
+        bio,
+        gender,
+        seeking,
         residence,
         profileDataJson,
-        bio,
         session.id
       )
       .run();
