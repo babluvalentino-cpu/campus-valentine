@@ -27,6 +27,12 @@ export function Dashboard() {
         const meJson = await meRes.json();
         setMe(meJson);
 
+        // Redirect to profile setup if profile is incomplete
+        if (meJson.status === "pending_profile") {
+          navigate("/profile-setup");
+          return;
+        }
+
         // 2. Fetch matches
         const res = await fetch(`${API_BASE}/api/matches`, {
           credentials: "include",
@@ -48,8 +54,14 @@ export function Dashboard() {
   }, [navigate]);
 
   async function handleLogout() {
-    // Optional: Call backend to clear cookie if endpoint exists
-    // await fetch(`${API_BASE}/api/logout`, { method: "POST" });
+    try {
+      await fetch(`${API_BASE}/api/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (e) {
+      console.error("Logout error:", e);
+    }
     navigate("/login");
   }
 

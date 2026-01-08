@@ -59,9 +59,10 @@ export function Signup() {
         throw new Error(text || "Signup failed");
       }
 
-      // OR parse JSON if backend returns it
-      // const data = await res.json();
-      navigate("/dashboard");
+      // Parse response to check status
+      const data = await res.json();
+      // New users start with pending_profile status, redirect to profile setup
+      navigate("/profile-setup");
     } catch (err) {
       console.error(err);
       setError(err.message || "Signup failed.");

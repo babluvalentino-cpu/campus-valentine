@@ -28,7 +28,20 @@ export function Login() {
         throw new Error(text || "Login failed");
       }
 
-      navigate("/dashboard");
+      // Check user status and redirect accordingly
+      const meRes = await fetch(`${API_BASE}/api/me`, {
+        credentials: "include",
+      });
+      if (meRes.ok) {
+        const me = await meRes.json();
+        if (me.status === "pending_profile") {
+          navigate("/profile-setup");
+        } else {
+          navigate("/dashboard");
+        }
+      } else {
+        navigate("/dashboard");
+      }
     } catch (err) {
       console.error(err);
       setError(err.message || "Login failed.");
