@@ -37,7 +37,8 @@ This will install:
 **Run these commands from `/worker` directory:**
 
 ```bash
-npx wrangler secret put TURNSTILE_SECRET_KEY
+npx wrangler secret put TURNSTILE_SECRET
+
 # Enter your Cloudflare Turnstile secret key from dashboard
 
 npx wrangler secret put JWT_SECRET

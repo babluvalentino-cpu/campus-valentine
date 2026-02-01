@@ -10,7 +10,7 @@ These are set in the Cloudflare Dashboard under your Worker's Settings → Varia
 
 ### Required Variables
 
-1. **`TURNSTILE_SECRET_KEY`**
+1. **`TURNSTILE_SECRET`**
    - **Type:** Secret
    - **Description:** Cloudflare Turnstile secret key for CAPTCHA verification
    - **How to get:** 
@@ -105,7 +105,7 @@ VITE_API_BASE=https://campus-valentine-backend.campusvalentine.workers.dev
 
 ### Backend (Cloudflare Dashboard)
 1. Navigate to Workers & Pages → Your Worker → Settings → Variables
-2. Add all three secrets: `TURNSTILE_SECRET_KEY`, `JWT_SECRET`, `ADMIN_SECRET`
+2. Add all three secrets: `TURNSTILE_SECRET`, `JWT_SECRET`, `ADMIN_SECRET`
 
 ### Frontend (Local)
 ```bash
@@ -155,7 +155,7 @@ Check browser console for API connection errors.
 ## 📝 Summary
 
 **Backend (Cloudflare):**
-- `TURNSTILE_SECRET_KEY` (Secret)
+- `TURNSTILE_SECRET` (Secret)
 - `JWT_SECRET` (Secret)
 - `ADMIN_SECRET` (Secret)
 

@@ -13,6 +13,14 @@ export function Login() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
+    
+    // Check if API_BASE is configured
+    if (!API_BASE) {
+      setError("API configuration error. Please check console for details.");
+      console.error("API_BASE is not set! Set VITE_API_BASE in .env file and rebuild.");
+      return;
+    }
+    
     setLoading(true);
 
     try {
@@ -24,8 +32,15 @@ export function Login() {
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || "Login failed");
+        let errorMessage = "Login failed";
+        try {
+          const errorData = await res.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch {
+          const text = await res.text();
+          errorMessage = text || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
 
       // Check user status and redirect accordingly
@@ -40,7 +55,7 @@ export function Login() {
           navigate("/dashboard");
         }
       } else {
-        navigate("/dashboard");
+      navigate("/dashboard");
       }
     } catch (err) {
       console.error(err);
@@ -65,7 +80,7 @@ export function Login() {
               className="w-full p-2 rounded bg-slate-950 border border-slate-700 text-sm"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              autoComplete="off"
+              autoComplete="username"
             />
           </div>
           <div>
@@ -75,6 +90,7 @@ export function Login() {
               className="w-full p-2 rounded bg-slate-950 border border-slate-700 text-sm"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
             />
           </div>
           {error && <p className="text-xs text-red-400">{error}</p>}

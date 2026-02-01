@@ -10,7 +10,7 @@ Complete checklist for deploying Campus Valentine to production.
 
 - [x] All API endpoints implemented
 - [x] Environment variables configured in Cloudflare Dashboard:
-  - [ ] `TURNSTILE_SECRET_KEY` (Secret)
+  - [ ] `TURNSTILE_SECRET` (Secret)
   - [ ] `JWT_SECRET` (Secret)
   - [ ] `ADMIN_SECRET` (Secret)
 - [x] Database schema applied to D1 database

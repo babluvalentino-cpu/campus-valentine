@@ -15,7 +15,7 @@ function App() {
         <Route path="/" element={<Landing />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/profile-setup" element={<ProfileSetup />} />
+        <Route path="/profile-setup" element={<ProfileSetup />} /> 
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/chat/:matchId" element={<Chat />} />
         <Route path="/admin" element={<Admin />} />

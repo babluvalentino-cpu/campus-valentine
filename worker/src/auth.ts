@@ -8,12 +8,14 @@ export interface SessionUser {
 
 export interface Env {
   DB: D1Database;
-  TURNSTILE_SECRET_KEY: string;
   JWT_SECRET: string;
   ADMIN_SECRET: string;
 }
 
 function getJwtSecretKey(env: Env): Uint8Array {
+  if (!env.JWT_SECRET || env.JWT_SECRET.trim() === "") {
+    throw new Error("JWT_SECRET is not configured");
+  }
   return new TextEncoder().encode(env.JWT_SECRET);
 }
 
@@ -97,6 +99,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
 }
 
 export async function createSessionToken(env: Env, user: SessionUser): Promise<string> {
+  try {
   const secret = getJwtSecretKey(env);
   return await new SignJWT({ sub: user.id, isAdmin: user.isAdmin })
     .setProtectedHeader({ alg: "HS256" })
@@ -105,6 +108,10 @@ export async function createSessionToken(env: Env, user: SessionUser): Promise<s
     .setAudience(AUDIENCE)
     .setExpirationTime("7d")
     .sign(secret);
+  } catch (err) {
+    console.error("Failed to create session token:", err);
+    throw new Error("Server configuration error: JWT_SECRET not set");
+  }
 }
 
 export function createAuthCookie(token: string): string {
@@ -134,7 +141,11 @@ export async function verifySession(request: Request, env: Env): Promise<Session
       id: payload.sub as string,
       isAdmin: Boolean(payload.isAdmin),
     };
-  } catch {
+  } catch (err) {
+    // Log error but don't expose it to client
+    if (err instanceof Error && err.message.includes("JWT_SECRET")) {
+      console.error("JWT_SECRET not configured");
+    }
     return null;
   }
 }

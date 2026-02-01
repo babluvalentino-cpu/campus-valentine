@@ -1,6 +1,5 @@
 // src/pages/Signup.jsx
 import React, { useEffect, useState } from "react";
-import { TurnstileWidget } from "../components/TurnstileWidget.jsx";
 import { GeoFence } from "../components/GeoFence.jsx";
 import { getFingerprintHash } from "../utils/fingerprint.js";
 import { API_BASE } from "../utils/apiBase.js";
@@ -12,7 +11,6 @@ export function Signup() {
   const [password, setPassword] = useState("");
   const [fingerprint, setFingerprint] = useState(null);
   const [coords, setCoords] = useState(null);
-  const [turnstileToken, setTurnstileToken] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -34,8 +32,11 @@ export function Signup() {
       setError("Fingerprint not ready. Please wait a second and try again.");
       return;
     }
-    if (!turnstileToken) {
-      setError("Please complete the human check.");
+
+    // Check if API_BASE is configured
+    if (!API_BASE) {
+      setError("API configuration error. Please check console for details.");
+      console.error("API_BASE is not set! Set VITE_API_BASE in .env file and rebuild.");
       return;
     }
 
@@ -50,13 +51,28 @@ export function Signup() {
           password,
           fingerprintHash: fingerprint,
           clientCoords: coords, // can be null
-          turnstileToken,
         }),
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || "Signup failed");
+        let errorMessage = "Signup failed";
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          try {
+            const errorData = await res.json();
+            errorMessage = errorData.error || errorMessage;
+          } catch {
+            errorMessage = `Signup failed (${res.status})`;
+          }
+        } else {
+          try {
+            const text = await res.text();
+            errorMessage = text || errorMessage;
+          } catch {
+            errorMessage = `Signup failed (${res.status})`;
+          }
+        }
+        throw new Error(errorMessage);
       }
 
       // Parse response to check status
@@ -86,7 +102,7 @@ export function Signup() {
               className="w-full p-2 rounded bg-slate-950 border border-slate-700 text-sm"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              autoComplete="off"
+              autoComplete="username"
             />
           </div>
           <div>
@@ -96,11 +112,11 @@ export function Signup() {
               className="w-full p-2 rounded bg-slate-950 border border-slate-700 text-sm"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
             />
           </div>
 
           <GeoFence onCoordsChange={setCoords} />
-          <TurnstileWidget onTokenChange={setTurnstileToken} />
 
           {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
 

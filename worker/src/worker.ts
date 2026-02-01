@@ -8,16 +8,72 @@ import {
   clearAuthCookie,
   verifySession,
 } from "./auth";
-import { verifyTurnstileToken } from "./turnstile";
 import { computeGeoVerified } from "./geofence";
 import { runMatchingAlgorithm } from "./matchingAlgorithm";
+const FRONTEND_ORIGIN = "https://campus-valentine-frontend.pages.dev";
+
+// Helper to get CORS headers with dynamic origin support
+function getCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("Origin");
+  // Allow production and preview deployments
+  const isProduction = origin === "https://campus-valentine-frontend.pages.dev";
+  const isPreview = origin && /^https:\/\/[a-f0-9]+\.campus-valentine-frontend\.pages\.dev$/.test(origin);
+  
+  const allowedOrigin = (isProduction || isPreview) ? origin! : FRONTEND_ORIGIN;
+
+  return {
+    "Access-Control-Allow-Origin": allowedOrigin,
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Credentials": "true",
+  };
+}
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": FRONTEND_ORIGIN,
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Credentials": "true",
+};
+
+
+// Helper function for JSON responses
+function jsonResponse(data: any, status = 200, request?: Request): Response {
+  const headers = request ? getCorsHeaders(request) : corsHeaders;
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      ...headers,
+    },
+  });
+}
+
+// Environment variable validation
+function validateEnv(env: Env): { valid: boolean; missing: string[] } {
+  const missing: string[] = [];
+  
+  if (!env.JWT_SECRET || env.JWT_SECRET.trim() === "") {
+    missing.push("JWT_SECRET");
+  }
+  if (!env.ADMIN_SECRET || env.ADMIN_SECRET.trim() === "") {
+    missing.push("ADMIN_SECRET");
+  }
+  if (!env.DB) {
+    missing.push("DB (D1 Database binding)");
+  }
+
+  return {
+    valid: missing.length === 0,
+    missing,
+  };
+}
 
 interface SignupBody {
   username: string;
   password: string;
   fingerprintHash: string;
   clientCoords: { lat: number; lon: number } | null;
-  turnstileToken: string;
 }
 
 interface LoginBody {
@@ -53,11 +109,34 @@ const INTEREST_SET = new Set(INTEREST_OPTIONS);
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: getCorsHeaders(request),
+      });
+    }
+
+
+
+    // Validate environment variables on first request
+    const envCheck = validateEnv(env);
+    if (!envCheck.valid) {
+      console.error("Missing environment variables:", envCheck.missing);
+      // Don't fail health check, but log error
+      if (request.url.endsWith("/api/health")) {
+        return jsonResponse({ 
+          ok: true, 
+          warning: "Some environment variables are missing",
+          missing: envCheck.missing 
+        });
+      }
+    }
+
     const url = new URL(request.url);
 
     if (url.pathname === "/api/health") {
       return new Response(JSON.stringify({ ok: true }), {
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...corsHeaders, },
       });
     }
 
@@ -81,9 +160,22 @@ export default {
       return handleGetMatches(request, env);
     }
 
+    // Chat endpoints - check /end first to avoid conflicts
     if (url.pathname.startsWith("/api/chat/") && url.pathname.endsWith("/end") && request.method === "POST") {
       const matchId = url.pathname.split("/")[3];
       return handleEndChat(request, env, matchId);
+    }
+
+    // Chat: Get Messages
+    if (url.pathname.startsWith("/api/chat/") && request.method === "GET" && !url.pathname.endsWith("/end")) {
+      const matchId = url.pathname.split("/")[3];
+      return handleGetMessages(request, env, matchId);
+    }
+
+    // Chat: Send Message
+    if (url.pathname.startsWith("/api/chat/") && request.method === "POST" && !url.pathname.endsWith("/end")) {
+      const matchId = url.pathname.split("/")[3];
+      return handleSendMessage(request, env, matchId);
     }
 
     if (url.pathname === "/api/admin/users" && request.method === "GET") {
@@ -110,20 +202,7 @@ export default {
       return handleLogout(request, env);
     }
 
-    if (url.pathname.startsWith("/api/chat/") && request.method === "GET") {
-      const matchId = url.pathname.split("/")[3];
-      return handleGetMessages(request, env, matchId);
-    }
-
-    if (url.pathname.startsWith("/api/chat/") && request.method === "POST") {
-      const matchId = url.pathname.split("/")[3];
-      if (url.pathname.endsWith("/end")) {
-        return handleEndChat(request, env, matchId);
-      }
-      return handleSendMessage(request, env, matchId);
-    }
-
-    return new Response("Not found", { status: 404 });
+    return jsonResponse({ error: "Not found" }, 404);
   },
 
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
@@ -136,35 +215,23 @@ async function handleSignup(request: Request, env: Env): Promise<Response> {
   try {
     body = (await request.json()) as SignupBody;
   } catch {
-    return new Response("Invalid JSON", { status: 400 });
+    return jsonResponse({ error: "Invalid JSON" }, 400, request);
   }
 
   const username = (body.username || "").trim();
   const password = body.password || "";
   const fingerprintHash = (body.fingerprintHash || "").trim();
   const clientCoords = body.clientCoords ?? null;
-  const turnstileToken = body.turnstileToken || "";
 
-  if (!username || !password || !fingerprintHash || !turnstileToken) {
-    return new Response("Missing required fields.", { status: 400 });
+  if (!username || !password || !fingerprintHash) {
+    return jsonResponse({ error: "Missing required fields" }, 400, request);
   }
 
   if (username.length < 3 || username.length > 32) {
-    return new Response("Username must be 3–32 characters.", { status: 400 });
+    return jsonResponse({ error: "Username must be 3–32 characters" }, 400, request);
   }
   if (password.length < 6 || password.length > 128) {
-    return new Response("Password length invalid.", { status: 400 });
-  }
-
-  const ip =
-    request.headers.get("CF-Connecting-IP") ||
-    request.headers.get("x-forwarded-for") ||
-    "";
-
-  // CAPTCHA check
-  const isHuman = await verifyTurnstileToken(turnstileToken, env, ip);
-  if (!isHuman) {
-    return new Response("CAPTCHA verification failed.", { status: 403 });
+    return jsonResponse({ error: "Password length invalid" }, 400, request);
   }
 
   // Geo verification
@@ -182,7 +249,7 @@ async function handleSignup(request: Request, env: Env): Promise<Response> {
       .all<{ id: string }>();
 
     if (existing.results && existing.results.length > 0) {
-      return new Response("Username or device already registered.", { status: 409 });
+      return jsonResponse({ error: "Username or device already registered" }, 409, request);
     }
 
     // ✅ PHASE-3 INSERT (all required fields)
@@ -200,9 +267,11 @@ async function handleSignup(request: Request, env: Env): Promise<Response> {
 
     // Create session cookie
     const token = await createSessionToken(env, { id: userId, isAdmin: false });
+    const corsHeadersDynamic = getCorsHeaders(request);
     const headers = new Headers({
       "Content-Type": "application/json",
       "Set-Cookie": createAuthCookie(token),
+      ...corsHeadersDynamic,
     });
 
     return new Response(
@@ -212,13 +281,13 @@ async function handleSignup(request: Request, env: Env): Promise<Response> {
         geo_verified: geoVerified,
       }),
       {
-      status: 201,
-      headers,
+        status: 201,
+        headers,
       }
     );
   } catch (err: any) {
     console.error("Signup error:", err);
-    return new Response("Error creating account.", { status: 500 });
+    return jsonResponse({ error: "Error creating account" }, 500, request);
   }
 }
 
@@ -227,14 +296,14 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
   try {
     body = (await request.json()) as LoginBody;
   } catch {
-    return new Response("Invalid JSON", { status: 400 });
+    return jsonResponse({ error: "Invalid JSON" }, 400, request);
   }
 
   const username = (body.username || "").trim();
   const password = body.password || "";
 
   if (!username || !password) {
-    return new Response("Missing username or password.", { status: 400 });
+    return jsonResponse({ error: "Missing username or password" }, 400, request);
   }
 
   try {
@@ -245,21 +314,23 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
       .first<{ id: string; password_hash: string; is_admin: number }>();
 
     if (!result) {
-      return new Response("Invalid credentials.", { status: 401 });
+      return jsonResponse({ error: "Invalid credentials" }, 401, request);
     }
 
     const ok = await verifyPassword(password, result.password_hash);
     if (!ok) {
-      return new Response("Invalid credentials.", { status: 401 });
+      return jsonResponse({ error: "Invalid credentials" }, 401, request);
     }
 
     const token = await createSessionToken(env, {
       id: result.id,
       isAdmin: result.is_admin === 1,
     });
+    const corsHeadersDynamic = getCorsHeaders(request);
     const headers = new Headers({
       "Content-Type": "application/json",
       "Set-Cookie": createAuthCookie(token),
+      ...corsHeadersDynamic,
     });
 
     return new Response(JSON.stringify({ id: result.id, username }), {
@@ -268,14 +339,14 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
     });
   } catch (err: any) {
     console.error("Login error:", err);
-    return new Response("Error logging in.", { status: 500 });
+    return jsonResponse({ error: "Error logging in" }, 500, request);
   }
 }
 
 async function handleMe(request: Request, env: Env): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session) {
-    return new Response("Unauthorized", { status: 401 });
+    return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
   const result = await env.DB.prepare(
@@ -285,27 +356,22 @@ async function handleMe(request: Request, env: Env): Promise<Response> {
     .first<{ id: string; username: string; is_admin: number; geo_verified: number; status: string }>();
 
   if (!result) {
-    return new Response("Not found", { status: 404 });
+    return jsonResponse({ error: "Not found" }, 404);
   }
 
-  return new Response(
-    JSON.stringify({
-      id: result.id,
-      username: result.username,
-      isAdmin: result.is_admin === 1,
-      geo_verified: result.geo_verified,
-      status: result.status,
-    }),
-    {
-      headers: { "Content-Type": "application/json" },
-    }
-  );
+  return jsonResponse({
+    id: result.id,
+    username: result.username,
+    isAdmin: result.is_admin === 1,
+    geo_verified: result.geo_verified,
+    status: result.status,
+  });
 }
 
 async function handleProfileUpdate(request: Request, env: Env): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session) {
-    return new Response("Unauthorized", { status: 401 });
+    return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
   let body: any;
@@ -313,7 +379,7 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
   try {
     body = await request.json();
   } catch {
-    return new Response("Invalid JSON", { status: 400 });
+    return jsonResponse({ error: "Invalid JSON" }, 400);
   }
 
   // Extract fields from wizard data (support both direct fields and profileData wrapper)
@@ -327,7 +393,7 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
 
   // Validate bio length
   if (bio.length > 200) {
-    return new Response("Bio too long.", { status: 400 });
+    return jsonResponse({ error: "Bio too long" }, 400);
   }
 
   // Store full wizard data in profile_data JSON
@@ -362,30 +428,24 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
       result.meta && "changes" in result.meta ? result.meta.changes : 0;
 
     if (!updated) {
-      return new Response("Profile cannot be updated in current state.", {
-        status: 409,
-      });
+      return jsonResponse({ error: "Profile cannot be updated in current state" }, 409);
     }
 
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ success: true });
   } catch (err) {
     console.error("Profile update error:", err);
-    return new Response("Error updating profile.", { status: 500 });
+    return jsonResponse({ error: "Error updating profile" }, 500);
   }
 }
 
 async function handleRunMatching(request: Request, env: Env): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session || !session.isAdmin) {
-    return new Response("Unauthorized", { status: 401 });
+    return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
   const result = await runMatchingAlgorithm(env.DB);
-  return new Response(JSON.stringify({ result }), {
-    headers: { "Content-Type": "application/json" },
-  });
+  return jsonResponse({ result });
 }
 
 async function runMidnightMatcher(env: Env) {
@@ -401,6 +461,7 @@ async function handleLogout(request: Request, env: Env): Promise<Response> {
   const headers = new Headers({
     "Content-Type": "application/json",
     "Set-Cookie": clearAuthCookie(),
+    ...corsHeaders,
   });
 
   return new Response(JSON.stringify({ success: true }), {
@@ -412,106 +473,97 @@ async function handleLogout(request: Request, env: Env): Promise<Response> {
 async function handleGetMessages(request: Request, env: Env, matchId: string): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session) {
-    return new Response("Unauthorized", { status: 401 });
+    return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
   try {
-    // Verify user is part of this match
+    // Verify user belongs to this match
     const match = await env.DB.prepare(
-      "SELECT user_a_id, user_b_id FROM Matches WHERE id = ? AND status = 'active'"
+      "SELECT id FROM Matches WHERE id = ? AND (user_a_id = ? OR user_b_id = ?) AND status = 'active'"
     )
-      .bind(matchId)
-      .first<{ user_a_id: string; user_b_id: string }>();
+      .bind(matchId, session.id, session.id)
+      .first<{ id: string }>();
 
-    if (!match || (match.user_a_id !== session.id && match.user_b_id !== session.id)) {
-      return new Response("Match not found or unauthorized", { status: 404 });
+    if (!match) {
+      return jsonResponse({ error: "Match not found or unauthorized" }, 404);
     }
 
-    // Get all messages for this match
+    // Fetch messages (Limit 50 for performance)
     const messages = await env.DB.prepare(
-      `SELECT id, sender_id, content, created_at
-       FROM Messages
-       WHERE match_id = ?
-       ORDER BY created_at ASC`
+      `SELECT id, sender_id, content, created_at 
+       FROM Messages 
+       WHERE match_id = ? 
+       ORDER BY created_at ASC
+       LIMIT 50`
     )
       .bind(matchId)
       .all<{ id: string; sender_id: string; content: string; created_at: string }>();
 
-    return new Response(JSON.stringify(messages.results || []), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse(messages.results || []);
   } catch (err) {
     console.error("Get messages error:", err);
-    return new Response("Error fetching messages.", { status: 500 });
+    return jsonResponse({ error: "Error fetching messages" }, 500);
   }
 }
 
 async function handleSendMessage(request: Request, env: Env, matchId: string): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session) {
-    return new Response("Unauthorized", { status: 401 });
+    return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
   let body: { content: string };
   try {
     body = await request.json();
   } catch {
-    return new Response("Invalid JSON", { status: 400 });
+    return jsonResponse({ error: "Invalid JSON" }, 400);
   }
 
   const content = (body.content || "").trim();
   if (!content || content.length === 0) {
-    return new Response("Message content is required.", { status: 400 });
+    return jsonResponse({ error: "Message cannot be empty" }, 400);
   }
 
   if (content.length > 1000) {
-    return new Response("Message too long.", { status: 400 });
+    return jsonResponse({ error: "Message too long (max 1000 characters)" }, 400);
   }
 
   try {
-    // Verify user is part of this match
+    // Verify match is ACTIVE and user belongs to it
     const match = await env.DB.prepare(
-      "SELECT user_a_id, user_b_id FROM Matches WHERE id = ? AND status = 'active'"
+      "SELECT id FROM Matches WHERE id = ? AND status = 'active' AND (user_a_id = ? OR user_b_id = ?)"
     )
-      .bind(matchId)
-      .first<{ user_a_id: string; user_b_id: string }>();
+      .bind(matchId, session.id, session.id)
+      .first<{ id: string }>();
 
-    if (!match || (match.user_a_id !== session.id && match.user_b_id !== session.id)) {
-      return new Response("Match not found or unauthorized", { status: 404 });
+    if (!match) {
+      return jsonResponse({ error: "Cannot send message (Match ended or not found)" }, 403);
     }
 
-    // Create message
-    const messageId = crypto.randomUUID();
+    // Insert Message
+    const msgId = crypto.randomUUID();
     await env.DB.prepare(
-      `INSERT INTO Messages (id, match_id, sender_id, content)
-       VALUES (?, ?, ?, ?)`
+      "INSERT INTO Messages (id, match_id, sender_id, content) VALUES (?, ?, ?, ?)"
     )
-      .bind(messageId, matchId, session.id, content)
+      .bind(msgId, matchId, session.id, content)
       .run();
 
-    return new Response(
-      JSON.stringify({
-        id: messageId,
-        match_id: matchId,
-        sender_id: session.id,
-        content,
-        created_at: new Date().toISOString(),
-      }),
-      {
-        status: 201,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
+    return jsonResponse({
+      id: msgId,
+      sender_id: session.id,
+      content,
+      created_at: new Date().toISOString(),
+    }, 201);
   } catch (err) {
     console.error("Send message error:", err);
-    return new Response("Error sending message.", { status: 500 });
+    return jsonResponse({ error: "Error sending message" }, 500);
   }
 }
 
 async function handleGetMatches(request: Request, env: Env): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session) {
-    return new Response("Unauthorized", { status: 401 });
+    return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
   try {
@@ -530,9 +582,7 @@ async function handleGetMatches(request: Request, env: Env): Promise<Response> {
       .all<{ id: string; created_at: string; partner_id: string }>();
 
     if (!matches.results || matches.results.length === 0) {
-      return new Response(JSON.stringify([]), {
-        headers: { "Content-Type": "application/json" },
-      });
+      return jsonResponse([]);
     }
 
     // Get partner info and last message for each match
@@ -564,19 +614,17 @@ async function handleGetMatches(request: Request, env: Env): Promise<Response> {
       })
     );
 
-    return new Response(JSON.stringify(matchData), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse(matchData);
   } catch (err) {
     console.error("Get matches error:", err);
-    return new Response("Error fetching matches.", { status: 500 });
+    return jsonResponse({ error: "Error fetching matches" }, 500);
   }
 }
 
 async function handleEndChat(request: Request, env: Env, matchId: string): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session) {
-    return new Response("Unauthorized", { status: 401 });
+    return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
   try {
@@ -588,7 +636,7 @@ async function handleEndChat(request: Request, env: Env, matchId: string): Promi
       .first<{ user_a_id: string; user_b_id: string }>();
 
     if (!match || (match.user_a_id !== session.id && match.user_b_id !== session.id)) {
-      return new Response("Match not found or unauthorized", { status: 404 });
+      return jsonResponse({ error: "Match not found or unauthorized" }, 404);
     }
 
     // End the match
@@ -605,23 +653,25 @@ async function handleEndChat(request: Request, env: Env, matchId: string): Promi
       .bind(match.user_a_id, match.user_b_id)
       .run();
 
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ success: true });
   } catch (err) {
     console.error("End chat error:", err);
-    return new Response("Error ending chat.", { status: 500 });
+    return jsonResponse({ error: "Error ending chat" }, 500);
   }
 }
 
 function verifyAdminSecret(request: Request, env: Env): boolean {
+  if (!env.ADMIN_SECRET) {
+    console.error("ADMIN_SECRET not configured");
+    return false;
+  }
   const secret = request.headers.get("x-admin-secret");
   return secret === env.ADMIN_SECRET;
 }
 
 async function handleAdminUsers(request: Request, env: Env): Promise<Response> {
   if (!verifyAdminSecret(request, env)) {
-    return new Response("Forbidden", { status: 403 });
+    return jsonResponse({ error: "Forbidden" }, 403);
   }
 
   try {
@@ -639,25 +689,23 @@ async function handleAdminUsers(request: Request, env: Env): Promise<Response> {
       created_at: string;
     }>();
 
-    return new Response(JSON.stringify(users.results || []), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse(users.results || []);
   } catch (err) {
     console.error("Admin users error:", err);
-    return new Response("Error fetching users.", { status: 500 });
+    return jsonResponse({ error: "Error fetching users" }, 500);
   }
 }
 
 async function handleAdminWhitelist(request: Request, env: Env): Promise<Response> {
   if (!verifyAdminSecret(request, env)) {
-    return new Response("Forbidden", { status: 403 });
+    return jsonResponse({ error: "Forbidden" }, 403);
   }
 
   let body: { user_id: string; status: boolean };
   try {
     body = await request.json();
   } catch {
-    return new Response("Invalid JSON", { status: 400 });
+    return jsonResponse({ error: "Invalid JSON" }, 400);
   }
 
   try {
@@ -667,25 +715,23 @@ async function handleAdminWhitelist(request: Request, env: Env): Promise<Respons
       .bind(body.status ? 1 : 0, body.user_id)
       .run();
 
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ success: true });
   } catch (err) {
     console.error("Admin whitelist error:", err);
-    return new Response("Error updating whitelist.", { status: 500 });
+    return jsonResponse({ error: "Error updating whitelist" }, 500);
   }
 }
 
 async function handleAdminUnmatch(request: Request, env: Env): Promise<Response> {
   if (!verifyAdminSecret(request, env)) {
-    return new Response("Forbidden", { status: 403 });
+    return jsonResponse({ error: "Forbidden" }, 403);
   }
 
   let body: { user_id: string };
   try {
     body = await request.json();
   } catch {
-    return new Response("Invalid JSON", { status: 400 });
+    return jsonResponse({ error: "Invalid JSON" }, 400);
   }
 
   try {
@@ -700,7 +746,7 @@ async function handleAdminUnmatch(request: Request, env: Env): Promise<Response>
       .first<{ id: string; user_a_id: string; user_b_id: string }>();
 
     if (!match) {
-      return new Response("No active match found", { status: 404 });
+      return jsonResponse({ error: "No active match found" }, 404);
     }
 
     // End the match
@@ -717,25 +763,23 @@ async function handleAdminUnmatch(request: Request, env: Env): Promise<Response>
       .bind(match.user_a_id, match.user_b_id)
       .run();
 
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ success: true });
   } catch (err) {
     console.error("Admin unmatch error:", err);
-    return new Response("Error unmatching users.", { status: 500 });
+    return jsonResponse({ error: "Error unmatching users" }, 500);
   }
 }
 
 async function handleAdminMatch(request: Request, env: Env): Promise<Response> {
   if (!verifyAdminSecret(request, env)) {
-    return new Response("Forbidden", { status: 403 });
+    return jsonResponse({ error: "Forbidden" }, 403);
   }
 
   let body: { user_a_id: string; user_b_id: string };
   try {
     body = await request.json();
   } catch {
-    return new Response("Invalid JSON", { status: 400 });
+    return jsonResponse({ error: "Invalid JSON" }, 400);
   }
 
   try {
@@ -764,10 +808,10 @@ async function handleAdminMatch(request: Request, env: Env): Promise<Response> {
       .first<{ is_whitelisted: number }>();
 
     if (existingA && !userB?.is_whitelisted) {
-      return new Response("User A already has an active match", { status: 409 });
+      return jsonResponse({ error: "User A already has an active match" }, 409);
     }
     if (existingB && !userB?.is_whitelisted) {
-      return new Response("User B already has an active match", { status: 409 });
+      return jsonResponse({ error: "User B already has an active match" }, 409);
     }
 
     // Create match
@@ -786,11 +830,9 @@ async function handleAdminMatch(request: Request, env: Env): Promise<Response> {
       .bind(body.user_a_id, body.user_b_id)
       .run();
 
-    return new Response(JSON.stringify({ success: true, match_id: matchId }), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ success: true, match_id: matchId });
   } catch (err) {
     console.error("Admin match error:", err);
-    return new Response("Error creating match.", { status: 500 });
+    return jsonResponse({ error: "Error creating match" }, 500);
   }
 }

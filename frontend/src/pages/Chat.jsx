@@ -100,8 +100,15 @@ export function Chat() {
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || "Failed to send message");
+        let errorMessage = "Failed to send message";
+        try {
+          const errorData = await res.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch {
+          const text = await res.text();
+          errorMessage = text || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
 
       const sentMessage = await res.json();
