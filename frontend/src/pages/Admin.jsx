@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { API_BASE } from "../utils/apiBase";
 
 export function Admin() {
-  const [secret, setSecret] = useState("");
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const navigate = useNavigate();
+  const [authStatus, setAuthStatus] = useState("pending"); // "pending" | "admin" | "forbidden" | "unauthorized"
   const [users, setUsers] = useState([]);
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(false);
@@ -14,44 +15,70 @@ export function Admin() {
   const [selectedUserA, setSelectedUserA] = useState(null);
   const [selectedUserBId, setSelectedUserBId] = useState("");
 
-  // 1. Fetch Users
+  const isAuthenticated = authStatus === "admin";
+
+  // Session-based auth: require logged-in admin (cookie). No static secret.
+  useEffect(() => {
+    let cancelled = false;
+    async function checkAdmin() {
+      try {
+        const res = await fetch(`${API_BASE}/api/me`, { credentials: "include" });
+        if (cancelled) return;
+        if (res.status === 401) {
+          setAuthStatus("unauthorized");
+          return;
+        }
+        if (!res.ok) {
+          setAuthStatus("unauthorized");
+          return;
+        }
+        const me = await res.json();
+        if (!me.isAdmin) {
+          setAuthStatus("forbidden");
+          return;
+        }
+        setAuthStatus("admin");
+        fetchUsers();
+      } catch (e) {
+        if (!cancelled) setAuthStatus("unauthorized");
+      }
+    }
+    checkAdmin();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Fetch users (session cookie only; no x-admin-secret)
   async function fetchUsers() {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/admin/users`, {
-        headers: { "x-admin-secret": secret },
-      });
-      if (res.status === 403) throw new Error("Invalid Admin Secret");
+      const res = await fetch(`${API_BASE}/api/admin/users`, { credentials: "include" });
+      if (res.status === 401) {
+        setAuthStatus("unauthorized");
+        return;
+      }
+      if (res.status === 403) {
+        setAuthStatus("forbidden");
+        return;
+      }
       if (!res.ok) throw new Error("Failed to fetch users");
       const data = await res.json();
       setUsers(data);
-      setIsAuthenticated(true);
       setError("");
     } catch (e) {
       setError(e.message);
-      setIsAuthenticated(false);
     } finally {
       setLoading(false);
     }
   }
 
-  function handleLogin(e) {
-    e.preventDefault();
-    fetchUsers();
-  }
-
   // 2. Toggle Whitelist
   async function toggleWhitelist(id, currentStatus) {
     try {
-      // Logic: Invert current status (1 -> 0, 0 -> 1)
       const newStatus = !currentStatus;
-      
       const res = await fetch(`${API_BASE}/api/admin/whitelist`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-secret": secret,
-        },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ user_id: id, status: newStatus }),
       });
 
@@ -68,10 +95,8 @@ export function Admin() {
     try {
       const res = await fetch(`${API_BASE}/api/admin/unmatch`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-secret": secret,
-        },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ user_id: id }),
       });
       if (!res.ok) throw new Error("Failed to unmatch");
@@ -91,14 +116,12 @@ export function Admin() {
 
   async function handleForceMatch() {
     if (!selectedUserBId) return alert("Please select a partner.");
-    
+
     try {
       const res = await fetch(`${API_BASE}/api/admin/match`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-secret": secret,
-        },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           user_a_id: selectedUserA.id,
           user_b_id: selectedUserBId,
@@ -112,7 +135,7 @@ export function Admin() {
         const txt = await res.text();
         throw new Error(txt || "Failed to force match");
       }
-      
+
       setIsModalOpen(false);
       fetchUsers(); // Refresh
       alert("Match Created Successfully!");
@@ -121,37 +144,52 @@ export function Admin() {
     }
   }
 
-  // --- VIEW: LOGIN SCREEN ---
-  if (!isAuthenticated) {
+  // --- VIEW: Not logged in -> show login CTA ---
+  if (authStatus === "unauthorized") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white">
-        <form onSubmit={handleLogin} className="bg-slate-900 p-8 rounded-xl border border-slate-800 w-full max-w-sm shadow-xl">
+        <div className="bg-slate-900 p-8 rounded-xl border border-slate-800 w-full max-w-sm shadow-xl text-center">
           <h1 className="text-xl font-bold mb-4 text-pink-500">Admin Command Center</h1>
-          <p className="text-xs text-slate-400 mb-4">Enter the server secret key to verify identity.</p>
-          
-          <input
-            type="password"
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            placeholder="e.g. mySuperSecretKey123"
-            className="w-full p-2 rounded bg-slate-950 border border-slate-700 mb-4 focus:border-pink-500 outline-none"
-          />
-          
-          {error && <div className="p-2 mb-4 bg-red-900/30 border border-red-800 rounded text-red-400 text-xs">{error}</div>}
-          
-          <button 
-            type="submit" 
-            disabled={loading}
-            className="w-full bg-pink-600 p-2 rounded hover:bg-pink-500 font-semibold transition-colors disabled:opacity-50"
+          <p className="text-slate-400 text-sm mb-6">You must be logged in to access the admin dashboard.</p>
+          <button
+            onClick={() => navigate("/login")}
+            className="w-full bg-pink-600 p-2 rounded hover:bg-pink-500 font-semibold transition-colors"
           >
-            {loading ? "Verifying..." : "Access Dashboard"}
+            Go to Login
           </button>
-        </form>
+        </div>
       </div>
     );
   }
 
-  // --- VIEW: DASHBOARD ---
+  // --- VIEW: Logged in but not admin ---
+  if (authStatus === "forbidden") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white">
+        <div className="bg-slate-900 p-8 rounded-xl border border-slate-800 w-full max-w-sm shadow-xl text-center">
+          <h1 className="text-xl font-bold mb-4 text-red-400">Access Denied</h1>
+          <p className="text-slate-400 text-sm mb-6">This area is restricted to administrators.</p>
+          <button
+            onClick={() => navigate("/dashboard")}
+            className="w-full bg-slate-700 p-2 rounded hover:bg-slate-600 font-semibold transition-colors"
+          >
+            Back to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- VIEW: Pending (checking session) ---
+  if (authStatus === "pending") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white">
+        <p className="text-sm text-slate-400">Checking access…</p>
+      </div>
+    );
+  }
+
+  // --- VIEW: DASHBOARD (authStatus === "admin") ---
   const filteredUsers = users.filter((u) =>
     u.username.toLowerCase().includes(filter.toLowerCase())
   );
@@ -159,7 +197,7 @@ export function Admin() {
   return (
     <div className="min-h-screen bg-slate-950 text-white p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
-        
+
         {/* Header */}
         <header className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
           <div>
@@ -217,8 +255,8 @@ export function Admin() {
                     </td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize
-                        ${u.status === 'matched' ? 'bg-green-900 text-green-200' : 
-                          u.status === 'pending_match' ? 'bg-blue-900 text-blue-200' : 
+                        ${u.status === 'matched' ? 'bg-green-900 text-green-200' :
+                          u.status === 'pending_match' ? 'bg-blue-900 text-blue-200' :
                           u.status === 'requeuing' ? 'bg-yellow-900 text-yellow-200' : 'bg-slate-800 text-slate-300'}
                       `}>
                         {u.status.replace('_', ' ')}
@@ -233,7 +271,7 @@ export function Admin() {
                     </td>
                     <td className="px-6 py-4 text-right space-x-2">
                       {/* 1. Toggle Whitelist */}
-                      <button 
+                      <button
                         onClick={() => toggleWhitelist(u.id, u.is_whitelisted)}
                         className="text-xs px-2 py-1 bg-slate-800 border border-slate-700 hover:border-yellow-500 hover:text-yellow-400 rounded transition-colors"
                       >
@@ -242,7 +280,7 @@ export function Admin() {
 
                       {/* 2. Unmatch (Only if matched) */}
                       {u.status === 'matched' && (
-                        <button 
+                        <button
                           onClick={() => handleUnmatch(u.id)}
                           className="text-xs px-2 py-1 bg-red-900/20 border border-red-900 hover:bg-red-900/40 text-red-400 rounded transition-colors"
                         >
@@ -251,7 +289,7 @@ export function Admin() {
                       )}
 
                       {/* 3. Force Match */}
-                      <button 
+                      <button
                         onClick={() => openForceMatch(u)}
                         className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white border border-blue-500 rounded transition-colors"
                       >
@@ -274,9 +312,9 @@ export function Admin() {
             <p className="text-sm text-slate-400 mb-6">
               Match <strong>{selectedUserA.username}</strong> ({selectedUserA.gender}) with:
             </p>
-            
+
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Select Partner</label>
-            <select 
+            <select
               className="w-full p-3 bg-slate-950 border border-slate-700 rounded-lg mb-6 text-white focus:border-pink-500 outline-none"
               onChange={(e) => setSelectedUserBId(e.target.value)}
               value={selectedUserBId}
@@ -294,13 +332,13 @@ export function Admin() {
             </select>
 
             <div className="flex justify-end gap-3">
-              <button 
+              <button
                 onClick={() => setIsModalOpen(false)}
                 className="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
               >
                 Cancel
               </button>
-              <button 
+              <button
                 onClick={handleForceMatch}
                 className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-colors shadow-lg shadow-blue-900/20"
               >

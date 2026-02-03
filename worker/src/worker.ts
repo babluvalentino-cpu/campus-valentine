@@ -660,26 +660,40 @@ async function handleEndChat(request: Request, env: Env, matchId: string): Promi
   }
 }
 
-function verifyAdminSecret(request: Request, env: Env): boolean {
-  if (!env.ADMIN_SECRET) {
-    console.error("ADMIN_SECRET not configured");
-    return false;
-  }
-  const secret = request.headers.get("x-admin-secret");
-  return secret === env.ADMIN_SECRET;
+/** Requires a valid session with isAdmin. Returns session or { status: 401|403 }. */
+async function requireAdminSession(
+  request: Request,
+  env: Env
+): Promise<{ id: string; isAdmin: true } | { status: 401 | 403 }> {
+  const session = await verifySession(request, env);
+  if (!session) return { status: 401 };
+  if (!session.isAdmin) return { status: 403 };
+  return session as { id: string; isAdmin: true };
 }
 
 async function handleAdminUsers(request: Request, env: Env): Promise<Response> {
-  if (!verifyAdminSecret(request, env)) {
-    return jsonResponse({ error: "Forbidden" }, 403);
+  const result = await requireAdminSession(request, env);
+  if ("status" in result) {
+    return jsonResponse(
+      { error: result.status === 401 ? "Unauthorized" : "Forbidden" },
+      result.status,
+      request
+    );
   }
+
+  const url = new URL(request.url);
+  const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get("limit") || "100", 10)));
+  const offset = Math.max(0, parseInt(url.searchParams.get("offset") || "0", 10));
 
   try {
     const users = await env.DB.prepare(
       `SELECT id, username, gender, year, status, is_whitelisted, created_at
        FROM Users
-       ORDER BY created_at DESC`
-    ).all<{
+       ORDER BY created_at DESC
+       LIMIT ? OFFSET ?`
+    )
+      .bind(limit, offset)
+      .all<{
       id: string;
       username: string;
       gender: string | null;
@@ -689,23 +703,28 @@ async function handleAdminUsers(request: Request, env: Env): Promise<Response> {
       created_at: string;
     }>();
 
-    return jsonResponse(users.results || []);
+    return jsonResponse(users.results || [], 200, request);
   } catch (err) {
     console.error("Admin users error:", err);
-    return jsonResponse({ error: "Error fetching users" }, 500);
+    return jsonResponse({ error: "Error fetching users" }, 500, request);
   }
 }
 
 async function handleAdminWhitelist(request: Request, env: Env): Promise<Response> {
-  if (!verifyAdminSecret(request, env)) {
-    return jsonResponse({ error: "Forbidden" }, 403);
+  const result = await requireAdminSession(request, env);
+  if ("status" in result) {
+    return jsonResponse(
+      { error: result.status === 401 ? "Unauthorized" : "Forbidden" },
+      result.status,
+      request
+    );
   }
 
   let body: { user_id: string; status: boolean };
   try {
     body = await request.json();
   } catch {
-    return jsonResponse({ error: "Invalid JSON" }, 400);
+    return jsonResponse({ error: "Invalid JSON" }, 400, request);
   }
 
   try {
@@ -715,23 +734,28 @@ async function handleAdminWhitelist(request: Request, env: Env): Promise<Respons
       .bind(body.status ? 1 : 0, body.user_id)
       .run();
 
-    return jsonResponse({ success: true });
+    return jsonResponse({ success: true }, 200, request);
   } catch (err) {
     console.error("Admin whitelist error:", err);
-    return jsonResponse({ error: "Error updating whitelist" }, 500);
+    return jsonResponse({ error: "Error updating whitelist" }, 500, request);
   }
 }
 
 async function handleAdminUnmatch(request: Request, env: Env): Promise<Response> {
-  if (!verifyAdminSecret(request, env)) {
-    return jsonResponse({ error: "Forbidden" }, 403);
+  const result = await requireAdminSession(request, env);
+  if ("status" in result) {
+    return jsonResponse(
+      { error: result.status === 401 ? "Unauthorized" : "Forbidden" },
+      result.status,
+      request
+    );
   }
 
   let body: { user_id: string };
   try {
     body = await request.json();
   } catch {
-    return jsonResponse({ error: "Invalid JSON" }, 400);
+    return jsonResponse({ error: "Invalid JSON" }, 400, request);
   }
 
   try {
@@ -746,7 +770,7 @@ async function handleAdminUnmatch(request: Request, env: Env): Promise<Response>
       .first<{ id: string; user_a_id: string; user_b_id: string }>();
 
     if (!match) {
-      return jsonResponse({ error: "No active match found" }, 404);
+      return jsonResponse({ error: "No active match found" }, 404, request);
     }
 
     // End the match
@@ -763,23 +787,28 @@ async function handleAdminUnmatch(request: Request, env: Env): Promise<Response>
       .bind(match.user_a_id, match.user_b_id)
       .run();
 
-    return jsonResponse({ success: true });
+    return jsonResponse({ success: true }, 200, request);
   } catch (err) {
     console.error("Admin unmatch error:", err);
-    return jsonResponse({ error: "Error unmatching users" }, 500);
+    return jsonResponse({ error: "Error unmatching users" }, 500, request);
   }
 }
 
 async function handleAdminMatch(request: Request, env: Env): Promise<Response> {
-  if (!verifyAdminSecret(request, env)) {
-    return jsonResponse({ error: "Forbidden" }, 403);
+  const result = await requireAdminSession(request, env);
+  if ("status" in result) {
+    return jsonResponse(
+      { error: result.status === 401 ? "Unauthorized" : "Forbidden" },
+      result.status,
+      request
+    );
   }
 
   let body: { user_a_id: string; user_b_id: string };
   try {
     body = await request.json();
   } catch {
-    return jsonResponse({ error: "Invalid JSON" }, 400);
+    return jsonResponse({ error: "Invalid JSON" }, 400, request);
   }
 
   try {
@@ -808,10 +837,10 @@ async function handleAdminMatch(request: Request, env: Env): Promise<Response> {
       .first<{ is_whitelisted: number }>();
 
     if (existingA && !userB?.is_whitelisted) {
-      return jsonResponse({ error: "User A already has an active match" }, 409);
+      return jsonResponse({ error: "User A already has an active match" }, 409, request);
     }
     if (existingB && !userB?.is_whitelisted) {
-      return jsonResponse({ error: "User B already has an active match" }, 409);
+      return jsonResponse({ error: "User B already has an active match" }, 409, request);
     }
 
     // Create match
@@ -830,9 +859,9 @@ async function handleAdminMatch(request: Request, env: Env): Promise<Response> {
       .bind(body.user_a_id, body.user_b_id)
       .run();
 
-    return jsonResponse({ success: true, match_id: matchId });
+    return jsonResponse({ success: true, match_id: matchId }, 200, request);
   } catch (err) {
     console.error("Admin match error:", err);
-    return jsonResponse({ error: "Error creating match" }, 500);
+    return jsonResponse({ error: "Error creating match" }, 500, request);
   }
 }

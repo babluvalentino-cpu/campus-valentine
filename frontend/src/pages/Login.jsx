@@ -49,13 +49,17 @@ export function Login() {
       });
       if (meRes.ok) {
         const me = await meRes.json();
+        if (me.isAdmin) {
+          navigate("/admin");
+          return;
+        }
         if (me.status === "pending_profile") {
           navigate("/profile-setup");
         } else {
           navigate("/dashboard");
         }
       } else {
-      navigate("/dashboard");
+        navigate("/dashboard");
       }
     } catch (err) {
       console.error(err);
