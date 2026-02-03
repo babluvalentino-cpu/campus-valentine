@@ -10,16 +10,13 @@ import {
 } from "./auth";
 import { computeGeoVerified } from "./geofence";
 import { runMatchingAlgorithm } from "./matchingAlgorithm";
-const FRONTEND_ORIGIN = "https://campus-valentine-frontend.pages.dev";
-
-// Helper to get CORS headers with dynamic origin support
+// Allow any Cloudflare Pages origin (*.pages.dev) so production and previews work
 function getCorsHeaders(request: Request): Record<string, string> {
-  const origin = request.headers.get("Origin");
-  // Allow production and preview deployments
-  const isProduction = origin === "https://campus-valentine-frontend.pages.dev";
-  const isPreview = origin && /^https:\/\/[a-f0-9]+\.campus-valentine-frontend\.pages\.dev$/.test(origin);
-  
-  const allowedOrigin = (isProduction || isPreview) ? origin! : FRONTEND_ORIGIN;
+  const origin = request.headers.get("Origin") || "";
+  const allowedOrigin =
+    origin && origin.startsWith("https://") && origin.endsWith(".pages.dev")
+      ? origin
+      : "https://campus-valentine.pages.dev";
 
   return {
     "Access-Control-Allow-Origin": allowedOrigin,
@@ -29,17 +26,19 @@ function getCorsHeaders(request: Request): Record<string, string> {
   };
 }
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": FRONTEND_ORIGIN,
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Allow-Credentials": "true",
-};
+function getCorsHeadersFallback(): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": "https://campus-valentine.pages.dev",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Credentials": "true",
+  };
+}
 
 
 // Helper function for JSON responses
 function jsonResponse(data: any, status = 200, request?: Request): Response {
-  const headers = request ? getCorsHeaders(request) : corsHeaders;
+  const headers = request ? getCorsHeaders(request) : getCorsHeadersFallback();
   return new Response(JSON.stringify(data), {
     status,
     headers: {
@@ -136,7 +135,7 @@ export default {
 
     if (url.pathname === "/api/health") {
       return new Response(JSON.stringify({ ok: true }), {
-        headers: { "Content-Type": "application/json", ...corsHeaders, },
+        headers: { "Content-Type": "application/json", ...getCorsHeadersFallback() },
       });
     }
 
@@ -461,7 +460,7 @@ async function handleLogout(request: Request, env: Env): Promise<Response> {
   const headers = new Headers({
     "Content-Type": "application/json",
     "Set-Cookie": clearAuthCookie(),
-    ...corsHeaders,
+    ...getCorsHeaders(request),
   });
 
   return new Response(JSON.stringify({ success: true }), {
