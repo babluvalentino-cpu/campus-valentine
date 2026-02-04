@@ -22,6 +22,7 @@ export interface ProfileData {
   intent?: Intent;
   year?: number;
   residence?: "day_scholar" | "hosteller";
+  dietary?: "veg" | "non_veg" | "jain" | "vegan";
   instrument?: "yes" | "no";
   bio?: string;
 
@@ -152,6 +153,7 @@ export function calculatePairwiseScore(a: User, b: User): number {
 
   // === Single-choice questionnaire fields ===
   score += equalFieldScore(profileA.residence, profileB.residence); // +50
+  score += equalFieldScore(profileA.dietary, profileB.dietary); // +50 (food compatibility for dates)
   score += equalFieldScore(profileA.instrument, profileB.instrument); // +50
   score += equalFieldScore(profileA.socialBattery, profileB.socialBattery); // +50
   score += equalFieldScore(profileA.connectionStyle, profileB.connectionStyle); // +50

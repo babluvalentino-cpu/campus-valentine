@@ -115,13 +115,13 @@ export async function createSessionToken(env: Env, user: SessionUser): Promise<s
 }
 
 export function createAuthCookie(token: string): string {
-  // 7 days
+  // 7 days. SameSite=None + Secure required for cross-origin (frontend on Pages, backend on Workers)
   const maxAge = 7 * 24 * 60 * 60;
-  return `auth_token=${token}; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=${maxAge}`;
+  return `auth_token=${token}; HttpOnly; Secure; Path=/; SameSite=None; Max-Age=${maxAge}`;
 }
 
 export function clearAuthCookie(): string {
-  return `auth_token=; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=0`;
+  return `auth_token=; HttpOnly; Secure; Path=/; SameSite=None; Max-Age=0`;
 }
 
 export async function verifySession(request: Request, env: Env): Promise<SessionUser | null> {

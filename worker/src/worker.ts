@@ -10,6 +10,8 @@ import {
 } from "./auth";
 import { computeGeoVerified } from "./geofence";
 import { runMatchingAlgorithm } from "./matchingAlgorithm";
+import { sanitizeMessage } from "./wordFilter";
+import { generateSmartIcebreaker } from "./icebreaker";
 // Allow any Cloudflare Pages origin (*.pages.dev) so production and previews work
 function getCorsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("Origin") || "";
@@ -159,22 +161,39 @@ export default {
       return handleGetMatches(request, env);
     }
 
-    // Chat endpoints - check /end first to avoid conflicts
+    // Chat: Report & Unmatch (must be before /end)
+    if (url.pathname.startsWith("/api/chat/") && url.pathname.endsWith("/report") && request.method === "POST") {
+      const matchId = url.pathname.split("/")[3];
+      return handleReportChat(request, env, matchId);
+    }
+
+    // Chat: End (unmatch by choice)
     if (url.pathname.startsWith("/api/chat/") && url.pathname.endsWith("/end") && request.method === "POST") {
       const matchId = url.pathname.split("/")[3];
       return handleEndChat(request, env, matchId);
     }
 
-    // Chat: Get Messages
-    if (url.pathname.startsWith("/api/chat/") && request.method === "GET" && !url.pathname.endsWith("/end")) {
-      const matchId = url.pathname.split("/")[3];
-      return handleGetMessages(request, env, matchId);
+    // Chat: Get Messages (path is /api/chat/:id only, not /end or /report)
+    if (url.pathname.startsWith("/api/chat/") && request.method === "GET") {
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts.length === 4 && parts[3] !== "end" && parts[3] !== "report") {
+        return handleGetMessages(request, env, parts[2]);
+      }
+      if (parts.length === 3) {
+        return handleGetMessages(request, env, parts[2]);
+      }
     }
 
-    // Chat: Send Message
-    if (url.pathname.startsWith("/api/chat/") && request.method === "POST" && !url.pathname.endsWith("/end")) {
-      const matchId = url.pathname.split("/")[3];
-      return handleSendMessage(request, env, matchId);
+    // Chat: Send Message (path is /api/chat/:id only)
+    if (url.pathname.startsWith("/api/chat/") && request.method === "POST") {
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts.length === 3) {
+        return handleSendMessage(request, env, parts[2]);
+      }
+    }
+
+    if (url.pathname === "/api/admin/reports" && request.method === "GET") {
+      return handleAdminReports(request, env);
     }
 
     if (url.pathname === "/api/admin/users" && request.method === "GET") {
@@ -201,7 +220,7 @@ export default {
       return handleLogout(request, env);
     }
 
-    return jsonResponse({ error: "Not found" }, 404);
+    return jsonResponse({ error: "Not found" }, 404, request);
   },
 
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
@@ -345,7 +364,7 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
 async function handleMe(request: Request, env: Env): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session) {
-    return jsonResponse({ error: "Unauthorized" }, 401);
+    return jsonResponse({ error: "Unauthorized" }, 401, request);
   }
 
   const result = await env.DB.prepare(
@@ -355,7 +374,7 @@ async function handleMe(request: Request, env: Env): Promise<Response> {
     .first<{ id: string; username: string; is_admin: number; geo_verified: number; status: string }>();
 
   if (!result) {
-    return jsonResponse({ error: "Not found" }, 404);
+    return jsonResponse({ error: "Not found" }, 404, request);
   }
 
   return jsonResponse({
@@ -370,7 +389,7 @@ async function handleMe(request: Request, env: Env): Promise<Response> {
 async function handleProfileUpdate(request: Request, env: Env): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session) {
-    return jsonResponse({ error: "Unauthorized" }, 401);
+    return jsonResponse({ error: "Unauthorized" }, 401, request);
   }
 
   let body: any;
@@ -378,7 +397,7 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
   try {
     body = await request.json();
   } catch {
-    return jsonResponse({ error: "Invalid JSON" }, 400);
+    return jsonResponse({ error: "Invalid JSON" }, 400, request);
   }
 
   // Extract fields from wizard data (support both direct fields and profileData wrapper)
@@ -389,10 +408,11 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
   const gender = wizardData.gender || null;
   const seeking = wizardData.seeking || null;
   const residence = wizardData.residence || null;
+  const dietary = wizardData.dietary || null;
 
   // Validate bio length
   if (bio.length > 200) {
-    return jsonResponse({ error: "Bio too long" }, 400);
+    return jsonResponse({ error: "Bio too long" }, 400, request);
   }
 
   // Store full wizard data in profile_data JSON
@@ -407,6 +427,7 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
            gender = ?,
            seeking = ?,
            residence = ?,
+           dietary_preference = ?,
            profile_data = ?,
            status = 'pending_match'
        WHERE id = ? AND status = 'pending_profile'`
@@ -418,6 +439,7 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
         gender,
         seeking,
         residence,
+        dietary,
         profileDataJson,
         session.id
       )
@@ -427,20 +449,57 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
       result.meta && "changes" in result.meta ? result.meta.changes : 0;
 
     if (!updated) {
-      return jsonResponse({ error: "Profile cannot be updated in current state" }, 409);
+      return jsonResponse({ error: "Profile cannot be updated in current state" }, 409, request);
     }
 
-    return jsonResponse({ success: true });
-  } catch (err) {
+    return jsonResponse({ success: true }, 200, request);
+  } catch (err: any) {
     console.error("Profile update error:", err);
-    return jsonResponse({ error: "Error updating profile" }, 500);
+
+    const msg = err && err.message ? String(err.message) : "";
+    // If the DB schema is missing the dietary_preference column, attempt a safe migration and retry once
+    if (msg.includes("no such column: dietary_preference") || msg.includes("has no column named dietary_preference")) {
+      try {
+        console.warn("Attempting to add missing column dietary_preference to Users table");
+        await env.DB.prepare(`ALTER TABLE Users ADD COLUMN dietary_preference TEXT`).run();
+
+        // Retry the update after migration
+        const retry = await env.DB.prepare(
+          `UPDATE Users
+           SET intent = ?,
+               year = ?,
+               bio = ?,
+               gender = ?,
+               seeking = ?,
+               residence = ?,
+               dietary_preference = ?,
+               profile_data = ?,
+               status = 'pending_match'
+           WHERE id = ? AND status = 'pending_profile'`
+        )
+          .bind(intent, year, bio, gender, seeking, residence, dietary, profileDataJson, session.id)
+          .run();
+
+        const updatedRetry = retry.meta && "changes" in retry.meta ? retry.meta.changes : 0;
+        if (!updatedRetry) {
+          return jsonResponse({ error: "Profile cannot be updated in current state" }, 409, request);
+        }
+
+        return jsonResponse({ success: true }, 200, request);
+      } catch (merr) {
+        console.error("Migration attempt failed:", merr);
+        // fall through to return generic 500 below
+      }
+    }
+
+    return jsonResponse({ error: "Error updating profile" }, 500, request);
   }
 }
 
 async function handleRunMatching(request: Request, env: Env): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session || !session.isAdmin) {
-    return jsonResponse({ error: "Unauthorized" }, 401);
+    return jsonResponse({ error: "Unauthorized" }, 401, request);
   }
 
   const result = await runMatchingAlgorithm(env.DB);
@@ -472,7 +531,7 @@ async function handleLogout(request: Request, env: Env): Promise<Response> {
 async function handleGetMessages(request: Request, env: Env, matchId: string): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session) {
-    return jsonResponse({ error: "Unauthorized" }, 401);
+    return jsonResponse({ error: "Unauthorized" }, 401, request);
   }
 
   try {
@@ -484,7 +543,7 @@ async function handleGetMessages(request: Request, env: Env, matchId: string): P
       .first<{ id: string }>();
 
     if (!match) {
-      return jsonResponse({ error: "Match not found or unauthorized" }, 404);
+      return jsonResponse({ error: "Match not found or unauthorized" }, 404, request);
     }
 
     // Fetch messages (Limit 50 for performance)
@@ -498,33 +557,33 @@ async function handleGetMessages(request: Request, env: Env, matchId: string): P
       .bind(matchId)
       .all<{ id: string; sender_id: string; content: string; created_at: string }>();
 
-    return jsonResponse(messages.results || []);
+    return jsonResponse(messages.results || [], 200, request);
   } catch (err) {
     console.error("Get messages error:", err);
-    return jsonResponse({ error: "Error fetching messages" }, 500);
+    return jsonResponse({ error: "Error fetching messages" }, 500, request);
   }
 }
 
 async function handleSendMessage(request: Request, env: Env, matchId: string): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session) {
-    return jsonResponse({ error: "Unauthorized" }, 401);
+    return jsonResponse({ error: "Unauthorized" }, 401, request);
   }
 
   let body: { content: string };
   try {
     body = await request.json();
   } catch {
-    return jsonResponse({ error: "Invalid JSON" }, 400);
+    return jsonResponse({ error: "Invalid JSON" }, 400, request);
   }
 
   const content = (body.content || "").trim();
   if (!content || content.length === 0) {
-    return jsonResponse({ error: "Message cannot be empty" }, 400);
+    return jsonResponse({ error: "Message cannot be empty" }, 400, request);
   }
 
   if (content.length > 1000) {
-    return jsonResponse({ error: "Message too long (max 1000 characters)" }, 400);
+    return jsonResponse({ error: "Message too long (max 1000 characters)" }, 400, request);
   }
 
   try {
@@ -536,33 +595,36 @@ async function handleSendMessage(request: Request, env: Env, matchId: string): P
       .first<{ id: string }>();
 
     if (!match) {
-      return jsonResponse({ error: "Cannot send message (Match ended or not found)" }, 403);
+      return jsonResponse({ error: "Cannot send message (Match ended or not found)" }, 403, request);
     }
+
+    // Sanitize message content (remove URLs and profanity)
+    const sanitizedContent = sanitizeMessage(content);
 
     // Insert Message
     const msgId = crypto.randomUUID();
     await env.DB.prepare(
       "INSERT INTO Messages (id, match_id, sender_id, content) VALUES (?, ?, ?, ?)"
     )
-      .bind(msgId, matchId, session.id, content)
+      .bind(msgId, matchId, session.id, sanitizedContent)
       .run();
 
     return jsonResponse({
       id: msgId,
       sender_id: session.id,
-      content,
+      content: sanitizedContent,
       created_at: new Date().toISOString(),
-    }, 201);
+    }, 201, request);
   } catch (err) {
     console.error("Send message error:", err);
-    return jsonResponse({ error: "Error sending message" }, 500);
+    return jsonResponse({ error: "Error sending message" }, 500, request);
   }
 }
 
 async function handleGetMatches(request: Request, env: Env): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session) {
-    return jsonResponse({ error: "Unauthorized" }, 401);
+    return jsonResponse({ error: "Unauthorized" }, 401, request);
   }
 
   try {
@@ -581,17 +643,23 @@ async function handleGetMatches(request: Request, env: Env): Promise<Response> {
       .all<{ id: string; created_at: string; partner_id: string }>();
 
     if (!matches.results || matches.results.length === 0) {
-      return jsonResponse([]);
+      return jsonResponse([], 200, request);
     }
 
     // Get partner info and last message for each match
     const matchData = await Promise.all(
       matches.results.map(async (match) => {
         const partner = await env.DB.prepare(
-          "SELECT id, username FROM Users WHERE id = ?"
+          "SELECT id, username, profile_data, sports, dietary_preference FROM Users WHERE id = ?"
         )
           .bind(match.partner_id)
-          .first<{ id: string; username: string }>();
+          .first<{ id: string; username: string; profile_data: string | null; dietary_preference: string | null }>();
+
+        const currentUser = await env.DB.prepare(
+          "SELECT profile_data, sports, dietary_preference FROM Users WHERE id = ?"
+        )
+          .bind(session.id)
+          .first<{ profile_data: string | null; dietary_preference: string | null }>();
 
         const lastMessage = await env.DB.prepare(
           `SELECT content, created_at
@@ -603,27 +671,101 @@ async function handleGetMatches(request: Request, env: Env): Promise<Response> {
           .bind(match.id)
           .first<{ content: string; created_at: string } | null>();
 
+        // Generate smart icebreaker
+        let icebreaker = "";
+        if (!lastMessage && partner && currentUser) {
+          const partnerProfile = partner.profile_data ? JSON.parse(partner.profile_data) : {};
+          const currentProfile = currentUser.profile_data ? JSON.parse(currentUser.profile_data) : {};
+          
+          const sportsA = new Set(currentProfile.sports || []);
+          const sportsB = new Set(partnerProfile.sports || []);
+          const sportIntersection = Array.from(sportsA).filter(s => sportsB.has(s)) as string[];
+
+          icebreaker = generateSmartIcebreaker({
+            username_a: "You",
+            username_b: partner.username,
+            sports_intersection: sportIntersection.length > 0 ? sportIntersection : undefined,
+            dietary_pref_a: currentUser.dietary_preference || undefined,
+            dietary_pref_b: partner.dietary_preference || undefined,
+          });
+        }
+
         return {
           id: match.id,
           partner: partner || { id: match.partner_id, username: "Unknown" },
           last_message: lastMessage?.content || "No messages yet.",
           last_message_at: lastMessage?.created_at || null,
           unread_count: 0, // TODO: Implement unread tracking
+          icebreaker,
         };
       })
     );
 
-    return jsonResponse(matchData);
+    return jsonResponse(matchData, 200, request);
   } catch (err) {
     console.error("Get matches error:", err);
-    return jsonResponse({ error: "Error fetching matches" }, 500);
+    return jsonResponse({ error: "Error fetching matches" }, 500, request);
+  }
+}
+
+async function handleReportChat(request: Request, env: Env, matchId: string): Promise<Response> {
+  const session = await verifySession(request, env);
+  if (!session) {
+    return jsonResponse({ error: "Unauthorized" }, 401, request);
+  }
+
+  let body: { reason?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON" }, 400, request);
+  }
+  const reason = (body.reason || "Inappropriate behavior").trim().slice(0, 500);
+
+  try {
+    const match = await env.DB.prepare(
+      "SELECT user_a_id, user_b_id FROM Matches WHERE id = ? AND status = 'active'"
+    )
+      .bind(matchId)
+      .first<{ user_a_id: string; user_b_id: string }>();
+
+    if (!match || (match.user_a_id !== session.id && match.user_b_id !== session.id)) {
+      return jsonResponse({ error: "Match not found or unauthorized" }, 404, request);
+    }
+
+    const reportedUserId = match.user_a_id === session.id ? match.user_b_id : match.user_a_id;
+
+    await env.DB.prepare(
+      "UPDATE Matches SET status = 'ended_by_report' WHERE id = ?"
+    )
+      .bind(matchId)
+      .run();
+
+    const reportId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO Reports (id, match_id, reporter_id, reported_user_id, reason)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+      .bind(reportId, matchId, session.id, reportedUserId, reason || "Reported by user")
+      .run();
+
+    await env.DB.prepare(
+      "UPDATE Users SET status = 'requeuing' WHERE id IN (?, ?) AND status = 'matched'"
+    )
+      .bind(match.user_a_id, match.user_b_id)
+      .run();
+
+    return jsonResponse({ success: true }, 200, request);
+  } catch (err) {
+    console.error("Report chat error:", err);
+    return jsonResponse({ error: "Error reporting" }, 500, request);
   }
 }
 
 async function handleEndChat(request: Request, env: Env, matchId: string): Promise<Response> {
   const session = await verifySession(request, env);
   if (!session) {
-    return jsonResponse({ error: "Unauthorized" }, 401);
+    return jsonResponse({ error: "Unauthorized" }, 401, request);
   }
 
   try {
@@ -635,7 +777,7 @@ async function handleEndChat(request: Request, env: Env, matchId: string): Promi
       .first<{ user_a_id: string; user_b_id: string }>();
 
     if (!match || (match.user_a_id !== session.id && match.user_b_id !== session.id)) {
-      return jsonResponse({ error: "Match not found or unauthorized" }, 404);
+      return jsonResponse({ error: "Match not found or unauthorized" }, 404, request);
     }
 
     // End the match
@@ -652,10 +794,10 @@ async function handleEndChat(request: Request, env: Env, matchId: string): Promi
       .bind(match.user_a_id, match.user_b_id)
       .run();
 
-    return jsonResponse({ success: true });
+    return jsonResponse({ success: true }, 200, request);
   } catch (err) {
     console.error("End chat error:", err);
-    return jsonResponse({ error: "Error ending chat" }, 500);
+    return jsonResponse({ error: "Error ending chat" }, 500, request);
   }
 }
 
@@ -668,6 +810,41 @@ async function requireAdminSession(
   if (!session) return { status: 401 };
   if (!session.isAdmin) return { status: 403 };
   return session as { id: string; isAdmin: true };
+}
+
+async function handleAdminReports(request: Request, env: Env): Promise<Response> {
+  const result = await requireAdminSession(request, env);
+  if ("status" in result) {
+    return jsonResponse(
+      { error: result.status === 401 ? "Unauthorized" : "Forbidden" },
+      result.status,
+      request
+    );
+  }
+  try {
+    const reports = await env.DB.prepare(
+      `SELECT r.id, r.match_id, r.reporter_id, r.reported_user_id, r.reason, r.created_at,
+              u1.username as reporter_username, u2.username as reported_username
+       FROM Reports r
+       JOIN Users u1 ON u1.id = r.reporter_id
+       JOIN Users u2 ON u2.id = r.reported_user_id
+       ORDER BY r.created_at DESC
+       LIMIT 100`
+    ).all<{
+      id: string;
+      match_id: string;
+      reporter_id: string;
+      reported_user_id: string;
+      reason: string;
+      created_at: string;
+      reporter_username: string;
+      reported_username: string;
+    }>();
+    return jsonResponse(reports.results || [], 200, request);
+  } catch (err) {
+    console.error("Admin reports error:", err);
+    return jsonResponse({ error: "Error fetching reports" }, 500, request);
+  }
 }
 
 async function handleAdminUsers(request: Request, env: Env): Promise<Response> {
