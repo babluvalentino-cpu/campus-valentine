@@ -115,11 +115,20 @@ export function Admin() {
         credentials: "include",
         body: JSON.stringify({ user_id: id }),
       });
-      if (!res.ok) throw new Error("Failed to unmatch");
+      if (!res.ok) {
+        let errorMsg = "Failed to unmatch";
+        try {
+          const errData = await res.json();
+          errorMsg = errData.error || errorMsg;
+        } catch {
+          // Use default error message
+        }
+        throw new Error(errorMsg);
+      }
       fetchUsers(); // Refresh
       alert("Match broken successfully.");
     } catch (e) {
-      alert(e.message);
+      alert(`Unmatch Error: ${e.message}`);
     }
   }
 
@@ -144,19 +153,27 @@ export function Admin() {
         }),
       });
 
-      if (res.status === 409) {
-        return alert("Error: Target user match limit reached. (Are they whitelisted?)");
-      }
       if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Failed to force match");
+        let errorMsg = "Failed to force match";
+        try {
+          const errData = await res.json();
+          errorMsg = errData.error || errorMsg;
+        } catch {
+          // Use default error message
+        }
+        
+        if (res.status === 409) {
+          throw new Error(`Match limit reached: ${errorMsg}`);
+        }
+        throw new Error(errorMsg);
       }
 
+      const data = await res.json();
       setIsModalOpen(false);
       fetchUsers(); // Refresh
-      alert("Match Created Successfully!");
+      alert(`Match Created Successfully! (ID: ${data.match_id})`);
     } catch (e) {
-      alert(e.message);
+      alert(`Force Match Error: ${e.message}`);
     }
   }
 
