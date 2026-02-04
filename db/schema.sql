@@ -26,6 +26,7 @@ CREATE TABLE Users (
 
   -- Extra top-level fields
   residence TEXT,                     -- 'day_scholar', 'hosteller' (optional, also in profile_data)
+  dietary_preference TEXT,           -- 'veg', 'non_veg', 'jain', 'vegan' (for food compatibility matching)
   profile_data TEXT NOT NULL,        -- JSON blob of wizard answers
   bio TEXT,                          -- OPTIONAL; may be NULL or empty string
 
@@ -54,7 +55,7 @@ CREATE TABLE Matches (
   user_a_id TEXT NOT NULL,
   user_b_id TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
-  status TEXT NOT NULL DEFAULT 'active',   -- 'active', 'ended_by_user', 'ended_by_admin'
+  status TEXT NOT NULL DEFAULT 'active',   -- 'active', 'ended_by_user', 'ended_by_admin', 'ended_by_report'
 
   FOREIGN KEY (user_a_id) REFERENCES Users(id) ON DELETE CASCADE,
   FOREIGN KEY (user_b_id) REFERENCES Users(id) ON DELETE CASCADE,
@@ -86,6 +87,21 @@ CREATE TABLE RateLimits (
   count INTEGER NOT NULL,
   expires_at TEXT NOT NULL
 );
+
+-- === Reports (chat safety: user-reported matches) ===
+CREATE TABLE IF NOT EXISTS Reports (
+  id TEXT PRIMARY KEY,
+  match_id TEXT NOT NULL,
+  reporter_id TEXT NOT NULL,
+  reported_user_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+  FOREIGN KEY (match_id) REFERENCES Matches(id),
+  FOREIGN KEY (reporter_id) REFERENCES Users(id),
+  FOREIGN KEY (reported_user_id) REFERENCES Users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reports_reported_user ON Reports(reported_user_id);
 
 -- === Audit logs ===
 CREATE TABLE AuditLogs (

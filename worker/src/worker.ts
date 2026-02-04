@@ -274,10 +274,10 @@ async function handleSignup(request: Request, env: Env): Promise<Response> {
     await env.DB.prepare(
       `INSERT INTO Users (
         id, username, password_hash, fingerprint_hash,
-        intent, year, residence, profile_data, bio,
+        intent, year, residence, dietary_preference, profile_data, bio,
         status, geo_verified, is_whitelisted, is_admin
       )
-      VALUES (?, ?, ?, ?, 'relationship', 1, NULL, '{}', '',
+      VALUES (?, ?, ?, ?, 'relationship', 1, NULL, NULL, '{}', '',
               'pending_profile', ?, 0, 0)`
     )
       .bind(userId, username, passwordHash, fingerprintHash, geoVerified)
@@ -419,6 +419,26 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
   const profileDataJson = JSON.stringify(wizardData);
 
   try {
+    // First, check user's current status
+    const userCheck = await env.DB.prepare(
+      "SELECT id, status FROM Users WHERE id = ?"
+    )
+      .bind(session.id)
+      .first<{ id: string; status: string }>();
+
+    console.log("User status check:", { userId: session.id, userStatus: userCheck?.status });
+
+    if (!userCheck) {
+      return jsonResponse({ error: "User not found" }, 404, request);
+    }
+
+    // Allow update from pending_profile or pending_match (retry case)
+    if (userCheck.status !== "pending_profile" && userCheck.status !== "pending_match") {
+      return jsonResponse({ 
+        error: `Profile cannot be updated in current state: ${userCheck.status}` 
+      }, 409, request);
+    }
+
     const result = await env.DB.prepare(
       `UPDATE Users
        SET intent = ?,
@@ -430,7 +450,7 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
            dietary_preference = ?,
            profile_data = ?,
            status = 'pending_match'
-       WHERE id = ? AND status = 'pending_profile'`
+       WHERE id = ?`
     )
       .bind(
         intent,
@@ -448,13 +468,15 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
     const updated =
       result.meta && "changes" in result.meta ? result.meta.changes : 0;
 
+    console.log("Profile update result:", { updated, changes: result.meta });
+
     if (!updated) {
-      return jsonResponse({ error: "Profile cannot be updated in current state" }, 409, request);
+      return jsonResponse({ error: "Failed to update profile" }, 500, request);
     }
 
     return jsonResponse({ success: true }, 200, request);
   } catch (err: any) {
-    console.error("Profile update error:", err);
+    console.error("Profile update error:", { userId: session.id, error: err, message: err?.message });
 
     const msg = err && err.message ? String(err.message) : "";
     // If the DB schema is missing the dietary_preference column, attempt a safe migration and retry once
@@ -475,7 +497,7 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
                dietary_preference = ?,
                profile_data = ?,
                status = 'pending_match'
-           WHERE id = ? AND status = 'pending_profile'`
+           WHERE id = ?`
         )
           .bind(intent, year, bio, gender, seeking, residence, dietary, profileDataJson, session.id)
           .run();
@@ -492,7 +514,7 @@ async function handleProfileUpdate(request: Request, env: Env): Promise<Response
       }
     }
 
-    return jsonResponse({ error: "Error updating profile" }, 500, request);
+    return jsonResponse({ error: "Error updating profile: " + msg }, 500, request);
   }
 }
 
@@ -650,13 +672,13 @@ async function handleGetMatches(request: Request, env: Env): Promise<Response> {
     const matchData = await Promise.all(
       matches.results.map(async (match) => {
         const partner = await env.DB.prepare(
-          "SELECT id, username, profile_data, sports, dietary_preference FROM Users WHERE id = ?"
+          "SELECT id, username, profile_data, dietary_preference FROM Users WHERE id = ?"
         )
           .bind(match.partner_id)
           .first<{ id: string; username: string; profile_data: string | null; dietary_preference: string | null }>();
 
         const currentUser = await env.DB.prepare(
-          "SELECT profile_data, sports, dietary_preference FROM Users WHERE id = ?"
+          "SELECT profile_data, dietary_preference FROM Users WHERE id = ?"
         )
           .bind(session.id)
           .first<{ profile_data: string | null; dietary_preference: string | null }>();
@@ -934,36 +956,51 @@ async function handleAdminUnmatch(request: Request, env: Env): Promise<Response>
     return jsonResponse({ error: "Invalid JSON" }, 400, request);
   }
 
+  if (!body.user_id) {
+    return jsonResponse({ error: "user_id is required" }, 400, request);
+  }
+
   try {
-    // Find active match for this user
-    const match = await env.DB.prepare(
+    // Find ALL active matches for this user (handles whitelisted users with multiple matches)
+    const result = await env.DB.prepare(
       `SELECT id, user_a_id, user_b_id
        FROM Matches
-       WHERE (user_a_id = ? OR user_b_id = ?) AND status = 'active'
-       LIMIT 1`
+       WHERE (user_a_id = ? OR user_b_id = ?) AND status = 'active'`
     )
       .bind(body.user_id, body.user_id)
-      .first<{ id: string; user_a_id: string; user_b_id: string }>();
+      .all<{ id: string; user_a_id: string; user_b_id: string }>();
 
-    if (!match) {
-      return jsonResponse({ error: "No active match found" }, 404, request);
+    const matches = result.results || [];
+
+    if (matches.length === 0) {
+      return jsonResponse({ error: "No active matches found" }, 404, request);
     }
 
-    // End the match
+    // End all active matches for this user
+    for (const match of matches) {
+      await env.DB.prepare(
+        "UPDATE Matches SET status = 'ended_by_admin' WHERE id = ?"
+      )
+        .bind(match.id)
+        .run();
+
+      // Requeue the other user (if they exist and aren't already in another match)
+      const otherUserId = match.user_a_id === body.user_id ? match.user_b_id : match.user_a_id;
+      await env.DB.prepare(
+        "UPDATE Users SET status = 'requeuing' WHERE id = ? AND status = 'matched'"
+      )
+        .bind(otherUserId)
+        .run();
+    }
+
+    // Requeue the target user
     await env.DB.prepare(
-      "UPDATE Matches SET status = 'ended_by_admin' WHERE id = ?"
+      "UPDATE Users SET status = 'requeuing' WHERE id = ? AND status = 'matched'"
     )
-      .bind(match.id)
+      .bind(body.user_id)
       .run();
 
-    // Requeue both users
-    await env.DB.prepare(
-      "UPDATE Users SET status = 'requeuing' WHERE id IN (?, ?) AND status = 'matched'"
-    )
-      .bind(match.user_a_id, match.user_b_id)
-      .run();
-
-    return jsonResponse({ success: true }, 200, request);
+    return jsonResponse({ success: true, unmatched_count: matches.length }, 200, request);
   } catch (err) {
     console.error("Admin unmatch error:", err);
     return jsonResponse({ error: "Error unmatching users" }, 500, request);
@@ -987,8 +1024,37 @@ async function handleAdminMatch(request: Request, env: Env): Promise<Response> {
     return jsonResponse({ error: "Invalid JSON" }, 400, request);
   }
 
+  // Validate both users exist
+  if (!body.user_a_id || !body.user_b_id) {
+    return jsonResponse({ error: "user_a_id and user_b_id are required" }, 400, request);
+  }
+
+  if (body.user_a_id === body.user_b_id) {
+    return jsonResponse({ error: "Cannot match a user with themselves" }, 400, request);
+  }
+
   try {
-    // Check if either user already has an active match
+    // Fetch both users and their whitelist status
+    const userA = await env.DB.prepare(
+      "SELECT id, is_whitelisted FROM Users WHERE id = ?"
+    )
+      .bind(body.user_a_id)
+      .first<{ id: string; is_whitelisted: number }>();
+
+    const userB = await env.DB.prepare(
+      "SELECT id, is_whitelisted FROM Users WHERE id = ?"
+    )
+      .bind(body.user_b_id)
+      .first<{ id: string; is_whitelisted: number }>();
+
+    if (!userA) {
+      return jsonResponse({ error: "User A not found" }, 404, request);
+    }
+    if (!userB) {
+      return jsonResponse({ error: "User B not found" }, 404, request);
+    }
+
+    // Check if User A already has an active match (unless whitelisted)
     const existingA = await env.DB.prepare(
       `SELECT id FROM Matches
        WHERE (user_a_id = ? OR user_b_id = ?) AND status = 'active'
@@ -997,6 +1063,11 @@ async function handleAdminMatch(request: Request, env: Env): Promise<Response> {
       .bind(body.user_a_id, body.user_a_id)
       .first<{ id: string }>();
 
+    if (existingA && !userA.is_whitelisted) {
+      return jsonResponse({ error: "User A already has an active match (not whitelisted)" }, 409, request);
+    }
+
+    // Check if User B already has an active match (unless whitelisted)
     const existingB = await env.DB.prepare(
       `SELECT id FROM Matches
        WHERE (user_a_id = ? OR user_b_id = ?) AND status = 'active'
@@ -1005,18 +1076,8 @@ async function handleAdminMatch(request: Request, env: Env): Promise<Response> {
       .bind(body.user_b_id, body.user_b_id)
       .first<{ id: string }>();
 
-    // Check if user B is whitelisted (can have multiple matches)
-    const userB = await env.DB.prepare(
-      "SELECT is_whitelisted FROM Users WHERE id = ?"
-    )
-      .bind(body.user_b_id)
-      .first<{ is_whitelisted: number }>();
-
-    if (existingA && !userB?.is_whitelisted) {
-      return jsonResponse({ error: "User A already has an active match" }, 409, request);
-    }
-    if (existingB && !userB?.is_whitelisted) {
-      return jsonResponse({ error: "User B already has an active match" }, 409, request);
+    if (existingB && !userB.is_whitelisted) {
+      return jsonResponse({ error: "User B already has an active match (not whitelisted)" }, 409, request);
     }
 
     // Create match
@@ -1028,9 +1089,9 @@ async function handleAdminMatch(request: Request, env: Env): Promise<Response> {
       .bind(matchId, body.user_a_id, body.user_b_id)
       .run();
 
-    // Update user statuses
+    // Update user statuses to 'matched' if they're not already
     await env.DB.prepare(
-      "UPDATE Users SET status = 'matched' WHERE id IN (?, ?) AND status IN ('pending_match', 'requeuing')"
+      "UPDATE Users SET status = 'matched' WHERE id IN (?, ?) AND status != 'matched'"
     )
       .bind(body.user_a_id, body.user_b_id)
       .run();
