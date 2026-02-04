@@ -6,6 +6,7 @@ export function Admin() {
   const navigate = useNavigate();
   const [authStatus, setAuthStatus] = useState("pending"); // "pending" | "admin" | "forbidden" | "unauthorized"
   const [users, setUsers] = useState([]);
+  const [reports, setReports] = useState([]);
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -39,6 +40,7 @@ export function Admin() {
         }
         setAuthStatus("admin");
         fetchUsers();
+        fetchReports();
       } catch (e) {
         if (!cancelled) setAuthStatus("unauthorized");
       }
@@ -68,6 +70,20 @@ export function Admin() {
       setError(e.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function fetchReports() {
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/reports`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setReports(Array.isArray(data) ? data : []);
+      } else {
+        setReports([]);
+      }
+    } catch (e) {
+      setReports([]);
     }
   }
 
@@ -204,10 +220,40 @@ export function Admin() {
             <h1 className="text-3xl font-bold text-white">Admin Dashboard</h1>
             <p className="text-slate-400 text-sm">Manage users, whitelist, and manual matches.</p>
           </div>
-          <button onClick={fetchUsers} className="text-sm bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded border border-slate-700 transition-colors">
+          <button onClick={() => { fetchUsers(); fetchReports(); }} className="text-sm bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded border border-slate-700 transition-colors">
             ↻ Refresh Data
           </button>
         </header>
+
+        {/* Reported users (safety) */}
+        {reports.length > 0 && (
+          <div className="bg-amber-900/20 border border-amber-800 rounded-xl p-4 mb-6">
+            <h2 className="text-lg font-semibold text-amber-400 mb-3">⚠️ Reported Users</h2>
+            <p className="text-xs text-slate-400 mb-3">Users reported by others in chat. Review and consider banning if needed.</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left text-slate-400">
+                <thead className="text-xs text-slate-300 uppercase border-b border-slate-700">
+                  <tr>
+                    <th className="py-2 pr-4">Reported</th>
+                    <th className="py-2 pr-4">By</th>
+                    <th className="py-2 pr-4">Reason</th>
+                    <th className="py-2 pr-4">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reports.map((r) => (
+                    <tr key={r.id} className="border-b border-slate-800">
+                      <td className="py-2 font-medium text-white">{r.reported_username}</td>
+                      <td className="py-2">{r.reporter_username}</td>
+                      <td className="py-2">{r.reason || "—"}</td>
+                      <td className="py-2 text-slate-500">{r.created_at ? new Date(r.created_at).toLocaleDateString() : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Stats & Filter Bar */}
         <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 mb-6 flex flex-col md:flex-row gap-4 justify-between items-center">

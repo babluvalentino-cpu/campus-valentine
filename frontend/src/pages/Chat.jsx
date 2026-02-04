@@ -13,6 +13,11 @@ export function Chat() {
   const [error, setError] = useState("");
   const [partner, setPartner] = useState(null);
   const [currentUserId, setCurrentUserId] = useState(null);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportReason, setReportReason] = useState("inappropriate");
+  const [reporting, setReporting] = useState(false);
+  const [icebreaker, setIcebreaker] = useState("");
+  const [messageWarning, setMessageWarning] = useState("");
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -70,6 +75,10 @@ export function Chat() {
             const currentMatch = matches.find((m) => m.id === matchId);
             if (currentMatch && currentMatch.partner) {
               setPartner(currentMatch.partner);
+              // Set icebreaker if available and no messages yet
+              if (currentMatch.icebreaker && data.length === 0) {
+                setIcebreaker(currentMatch.icebreaker);
+              }
             }
           }
         } catch (e) {
@@ -91,6 +100,14 @@ export function Chat() {
     if (!newMessage.trim() || sending) return;
 
     setSending(true);
+    setMessageWarning("");
+    
+    // Check for suspicious content (basic client-side check)
+    const hasUrl = /https?:\/\/[^\s]+/gi.test(newMessage);
+    if (hasUrl) {
+      setMessageWarning("⚠️ Links are not allowed in messages");
+    }
+
     try {
       const res = await fetch(`${API_BASE}/api/chat/${matchId}`, {
         method: "POST",
@@ -114,6 +131,7 @@ export function Chat() {
       const sentMessage = await res.json();
       setMessages((prev) => [...prev, sentMessage]);
       setNewMessage("");
+      setMessageWarning("");
     } catch (e) {
       console.error(e);
       setError(e.message || "Failed to send message.");
@@ -140,6 +158,30 @@ export function Chat() {
       navigate("/dashboard");
     } catch (e) {
       alert(e.message || "Failed to end chat.");
+    }
+  }
+
+  async function handleReportAndUnmatch() {
+    setReporting(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/chat/${matchId}/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ reason: reportReason }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to report");
+      }
+
+      setShowReportModal(false);
+      navigate("/dashboard");
+    } catch (e) {
+      alert(e.message || "Failed to report.");
+    } finally {
+      setReporting(false);
     }
   }
 
@@ -173,19 +215,75 @@ export function Chat() {
             <p className="text-xs text-slate-500">Match</p>
           </div>
         </div>
-        <button
-          onClick={handleEndChat}
-          className="text-xs px-3 py-1 rounded bg-red-900/30 border border-red-900 hover:bg-red-900/50 text-red-400"
-        >
-          End Chat
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowReportModal(true)}
+            className="text-xs px-3 py-1 rounded bg-amber-900/30 border border-amber-800 hover:bg-amber-900/50 text-amber-400"
+            title="Report & Unmatch"
+          >
+            Report
+          </button>
+          <button
+            onClick={handleEndChat}
+            className="text-xs px-3 py-1 rounded bg-red-900/30 border border-red-900 hover:bg-red-900/50 text-red-400"
+          >
+            End Chat
+          </button>
+        </div>
       </nav>
+
+      {/* Report & Unmatch modal */}
+      {showReportModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 p-6 rounded-2xl border border-slate-700 w-full max-w-sm shadow-2xl">
+            <h2 className="text-lg font-bold text-white mb-2">Report & Unmatch</h2>
+            <p className="text-sm text-slate-400 mb-4">
+              This will immediately end the chat and flag this user for admin review. You will be requeued for matching.
+            </p>
+            <label className="block text-xs font-medium text-slate-500 mb-2">Reason</label>
+            <select
+              value={reportReason}
+              onChange={(e) => setReportReason(e.target.value)}
+              className="w-full p-2 rounded bg-slate-950 border border-slate-700 text-white text-sm mb-4"
+            >
+              <option value="inappropriate">Inappropriate messages</option>
+              <option value="harassment">Harassment</option>
+              <option value="spam">Spam</option>
+              <option value="other">Other</option>
+            </select>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowReportModal(false)}
+                disabled={reporting}
+                className="flex-1 px-3 py-2 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReportAndUnmatch}
+                disabled={reporting}
+                className="flex-1 px-3 py-2 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium disabled:opacity-50"
+              >
+                {reporting ? "Reporting…" : "Report & Unmatch"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Smart Icebreaker Suggestion */}
+        {messages.length === 0 && icebreaker && (
+          <div className="bg-gradient-to-r from-pink-900/40 to-purple-900/40 border border-pink-700/50 rounded-lg p-4 text-center">
+            <p className="text-xs text-pink-300 font-medium mb-2">💡 Conversation Starter</p>
+            <p className="text-sm text-pink-200 italic">{icebreaker}</p>
+          </div>
+        )}
+
         {messages.length === 0 ? (
           <div className="text-center text-slate-500 text-sm mt-8">
-            No messages yet. Start the conversation!
+            {icebreaker ? "Send the suggested message or start with your own!" : "No messages yet. Start the conversation!"}
           </div>
         ) : (
           messages.map((msg) => {
@@ -226,6 +324,11 @@ export function Chat() {
 
       {/* Input */}
       <form onSubmit={handleSend} className="border-t border-slate-800 p-4 bg-slate-900">
+        {messageWarning && (
+          <div className="mb-2 text-xs text-amber-300 bg-amber-900/30 px-3 py-1 rounded border border-amber-700">
+            {messageWarning}
+          </div>
+        )}
         <div className="flex gap-2">
           <input
             type="text"

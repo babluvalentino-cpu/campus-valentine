@@ -65,6 +65,7 @@ export function ProfileWizard({ onComplete }) {
     intent: "", // 'relationship' | 'friendship'
     year: "", // "1".."5"
     residence: "", // 'day_scholar' | 'hosteller'
+    dietary: "", // 'veg' | 'non_veg' | 'jain' | 'vegan'
     instrument: "", // 'yes' | 'no'
     bio: "",
 
@@ -127,6 +128,7 @@ export function ProfileWizard({ onComplete }) {
       }
       if (!data.year) return "Please select your current year.";
       if (!data.residence) return "Please select your residence status.";
+      if (!data.dietary) return "Please select your dietary preference.";
       if (!data.instrument) return "Please answer if you play an instrument.";
       if (data.bio.length > 200) return "Bio must be at most 200 characters.";
     } else if (currentStep === 2) {
@@ -192,6 +194,7 @@ export function ProfileWizard({ onComplete }) {
       intent: data.intent === "relationship" ? "relationship" : "friendship",
       year: parseInt(String(data.year), 10),
       residence: data.residence,
+      dietary: data.dietary,
       instrument: data.instrument,
       bio: data.bio.trim(),
 
@@ -442,6 +445,36 @@ function Step1Basics({ data, update }) {
             value="hosteller"
             checked={data.residence === "hosteller"}
             onChange={() => update("residence", "hosteller")}
+          />
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-1">Dietary preference? (Helps plan dates)</p>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <RadioPill
+            label="Veg"
+            value="veg"
+            checked={data.dietary === "veg"}
+            onChange={() => update("dietary", "veg")}
+          />
+          <RadioPill
+            label="Non-Veg"
+            value="non_veg"
+            checked={data.dietary === "non_veg"}
+            onChange={() => update("dietary", "non_veg")}
+          />
+          <RadioPill
+            label="Jain"
+            value="jain"
+            checked={data.dietary === "jain"}
+            onChange={() => update("dietary", "jain")}
+          />
+          <RadioPill
+            label="Vegan"
+            value="vegan"
+            checked={data.dietary === "vegan"}
+            onChange={() => update("dietary", "vegan")}
           />
         </div>
       </div>
