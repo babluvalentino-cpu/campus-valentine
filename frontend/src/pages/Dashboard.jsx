@@ -1,6 +1,7 @@
 // src/pages/Dashboard.jsx
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { MatchCelebration } from "../components/MatchCelebration";
 import { API_BASE } from "../utils/apiBase";
 
 export function Dashboard() {
@@ -9,6 +10,30 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [me, setMe] = useState(null);
+  const [celebrationMatch, setCelebrationMatch] = useState(null);
+
+  // Helper: Get seen matches from localStorage
+  const getSeenMatches = () => {
+    try {
+      const stored = localStorage.getItem("seenMatches");
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  // Helper: Save seen matches to localStorage
+  const saveSeenMatch = (matchId) => {
+    try {
+      const seen = getSeenMatches();
+      if (!seen.includes(matchId)) {
+        seen.push(matchId);
+        localStorage.setItem("seenMatches", JSON.stringify(seen));
+      }
+    } catch {
+      // Silently fail if localStorage is unavailable
+    }
+  };
 
   useEffect(() => {
     async function load() {
@@ -42,6 +67,15 @@ export function Dashboard() {
         }
         const list = await res.json();
         setMatches(Array.isArray(list) ? list : []);
+
+        // 3. Detect new matches for celebration
+        if (Array.isArray(list) && list.length > 0) {
+          const seenMatches = getSeenMatches();
+          const newMatch = list.find((m) => !seenMatches.includes(m.id));
+          if (newMatch) {
+            setCelebrationMatch(newMatch);
+          }
+        }
       } catch (e) {
         console.error(e);
         setError(e.message || "Failed to load dashboard.");
@@ -67,6 +101,13 @@ export function Dashboard() {
 
   function openChat(matchId) {
     navigate(`/chat/${matchId}`);
+  }
+
+  function handleCelebrationClose() {
+    if (celebrationMatch) {
+      saveSeenMatch(celebrationMatch.id);
+    }
+    setCelebrationMatch(null);
   }
 
   // --- Loading State (Full Screen) ---
@@ -99,6 +140,15 @@ export function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
+      {/* Match Celebration Popup */}
+      {celebrationMatch && (
+        <MatchCelebration
+          match={celebrationMatch}
+          currentUserGender={me?.gender}
+          onClose={handleCelebrationClose}
+        />
+      )}
+
       {/* --- Navbar --- */}
       <nav className="border-b border-slate-800 p-4 flex justify-between items-center bg-slate-900 sticky top-0 z-10">
         <span className="font-bold text-xl text-pink-500">Campus Valentine</span>
