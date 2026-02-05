@@ -358,7 +358,7 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
       ...corsHeadersDynamic,
     });
 
-    return new Response(JSON.stringify({ id: result.id, username }), {
+    return new Response(JSON.stringify({ id: result.id, username, status: "logged_in" }), {
       status: 200,
       headers,
     });
@@ -375,10 +375,10 @@ async function handleMe(request: Request, env: Env): Promise<Response> {
   }
 
   const result = await env.DB.prepare(
-    "SELECT id, username, is_admin, geo_verified, status FROM Users WHERE id = ?"
+    "SELECT id, username, is_admin, geo_verified, status, gender, seeking, year FROM Users WHERE id = ?"
   )
     .bind(session.id)
-    .first<{ id: string; username: string; is_admin: number; geo_verified: number; status: string }>();
+    .first<{ id: string; username: string; is_admin: number; geo_verified: number; status: string; gender: string | null; seeking: string | null; year: number | null }>();
 
   if (!result) {
     return jsonResponse({ error: "Not found" }, 404, request);
@@ -390,14 +390,22 @@ async function handleMe(request: Request, env: Env): Promise<Response> {
     isAdmin: result.is_admin === 1,
     geo_verified: result.geo_verified,
     status: result.status,
+    gender: result.gender,
+    seeking: result.seeking,
+    year: result.year,
   });
 }
 
 async function handleProfileUpdate(request: Request, env: Env): Promise<Response> {
+  console.log("🔍 Profile update request received");
   const session = await verifySession(request, env);
+  
   if (!session) {
+    console.error("❌ Profile update: No session found. Cookie might not be sent or JWT verification failed.");
     return jsonResponse({ error: "Unauthorized" }, 401, request);
   }
+
+  console.log("✓ Session verified for user:", session.id);
 
   let body: any;
 
