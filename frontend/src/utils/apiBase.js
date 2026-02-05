@@ -5,3 +5,18 @@ export const API_BASE = import.meta.env.VITE_API_BASE || "https://campus-valenti
 if (!import.meta.env.VITE_API_BASE) {
   console.warn("VITE_API_BASE not set at build time; falling back to default Worker URL.");
 }
+
+// Helper to get auth token from localStorage
+export function getStoredToken() {
+  return localStorage.getItem("auth_token");
+}
+
+// Helper to store auth token in localStorage
+export function storeAuthToken(token) {
+  localStorage.setItem("auth_token", token);
+}
+
+// Clear auth token
+export function clearAuthToken() {
+  localStorage.removeItem("auth_token");
+}

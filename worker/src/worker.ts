@@ -23,7 +23,7 @@ function getCorsHeaders(request: Request): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": allowedOrigin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Credentials": "true",
   };
 }
@@ -32,7 +32,7 @@ function getCorsHeadersFallback(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "https://campus-valentine.pages.dev",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Credentials": "true",
   };
 }
@@ -151,6 +151,20 @@ export default {
 
     if (url.pathname === "/api/me" && request.method === "GET") {
       return handleMe(request, env);
+    }
+
+    // Debug endpoint: check if cookies are being received
+    if (url.pathname === "/api/debug/cookies" && request.method === "GET") {
+      const cookies = request.headers.get("Cookie") || "(no cookies received)";
+      const origin = request.headers.get("Origin") || "(no origin)";
+      console.log("📋 DEBUG: Cookies received:", cookies);
+      console.log("📋 DEBUG: Origin:", origin);
+      return jsonResponse({
+        message: "Debug cookies endpoint",
+        cookiesReceived: cookies,
+        originHeader: origin,
+        timestamp: new Date().toISOString(),
+      }, 200, request);
     }
 
     if (url.pathname === "/api/profile" && request.method === "POST") {
@@ -304,6 +318,7 @@ async function handleSignup(request: Request, env: Env): Promise<Response> {
         id: userId,
         username,
         geo_verified: geoVerified,
+        token, // Include token in response body so frontend can store it
       }),
       {
         status: 201,
@@ -358,7 +373,12 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
       ...corsHeadersDynamic,
     });
 
-    return new Response(JSON.stringify({ id: result.id, username, status: "logged_in" }), {
+    return new Response(JSON.stringify({ 
+      id: result.id, 
+      username, 
+      status: "logged_in",
+      token, // Include token in response body
+    }), {
       status: 200,
       headers,
     });
@@ -398,11 +418,18 @@ async function handleMe(request: Request, env: Env): Promise<Response> {
 
 async function handleProfileUpdate(request: Request, env: Env): Promise<Response> {
   console.log("🔍 Profile update request received");
+  const cookieHeader = request.headers.get("Cookie") || "(no cookies)";
+  console.log("📋 Cookies in request:", cookieHeader);
+  
   const session = await verifySession(request, env);
   
   if (!session) {
     console.error("❌ Profile update: No session found. Cookie might not be sent or JWT verification failed.");
-    return jsonResponse({ error: "Unauthorized" }, 401, request);
+    console.error("   Cookies received:", cookieHeader);
+    return jsonResponse({ 
+      error: "Unauthorized - session not found",
+      debugInfo: "No auth_token cookie received or JWT verification failed"
+    }, 401, request);
   }
 
   console.log("✓ Session verified for user:", session.id);

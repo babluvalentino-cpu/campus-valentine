@@ -1,0 +1,1 @@
+SELECT json_group_array(json_object('id', id, 'username', username, 'gender', gender, 'status', status)) as users_json FROM Users;

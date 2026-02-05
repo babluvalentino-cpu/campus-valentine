@@ -1,0 +1,1 @@
+SELECT id, username, gender, status FROM Users LIMIT 50;

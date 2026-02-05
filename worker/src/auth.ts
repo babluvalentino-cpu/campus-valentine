@@ -134,15 +134,27 @@ export function clearAuthCookie(): string {
 }
 
 export async function verifySession(request: Request, env: Env): Promise<SessionUser | null> {
+  let token: string | null = null;
+
+  // Try to get token from cookie first (primary method)
   const cookie = request.headers.get("Cookie") || "";
-  const match = cookie.match(/auth_token=([^;]+)/);
-  if (!match) {
-    // Log if no cookie found - this helps debug CORS/cookie issues
-    console.log("⚠️ No auth_token cookie found in request");
-    return null;
+  const cookieMatch = cookie.match(/auth_token=([^;]+)/);
+  if (cookieMatch) {
+    token = cookieMatch[1];
+    console.log("✓ Found auth_token in cookie");
+  } else {
+    // Fall back to Authorization header (for cross-domain requests where cookies don't work)
+    const authHeader = request.headers.get("Authorization") || "";
+    const bearerMatch = authHeader.match(/Bearer\s+([^\s]+)/);
+    if (bearerMatch) {
+      token = bearerMatch[1];
+      console.log("✓ Found auth_token in Authorization header");
+    } else {
+      console.log("⚠️ No auth_token found in cookie or Authorization header");
+      return null;
+    }
   }
 
-  const token = match[1];
   try {
     const secret = getJwtSecretKey(env);
     const { payload } = await jwtVerify(token, secret, {
@@ -158,10 +170,7 @@ export async function verifySession(request: Request, env: Env): Promise<Session
   } catch (err) {
     // Log error for debugging
     if (err instanceof Error) {
-      console.warn("⚠️ Session verification failed:", err.message);
-      if (err.message.includes("JWT_SECRET")) {
-        console.error("❌ JWT_SECRET not configured");
-      }
+      console.log("✗ JWT verification failed:", err.message);
     }
     return null;
   }

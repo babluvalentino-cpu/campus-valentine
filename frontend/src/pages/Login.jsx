@@ -1,7 +1,7 @@
 // src/pages/Login.jsx
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { API_BASE } from "../utils/apiBase.js";
+import { API_BASE, storeAuthToken, getStoredToken } from "../utils/apiBase.js";
 
 export function Login() {
   const navigate = useNavigate();
@@ -43,8 +43,17 @@ export function Login() {
         throw new Error(errorMessage);
       }
 
+      // Store token from response
+      const data = await res.json();
+      if (data.token) {
+        storeAuthToken(data.token);
+        console.log("✓ Auth token stored in localStorage");
+      }
+
       // Check user status and redirect accordingly
+      const token = getStoredToken();
       const meRes = await fetch(`${API_BASE}/api/me`, {
+        headers: token ? { "Authorization": `Bearer ${token}` } : {},
         credentials: "include",
       });
       if (meRes.ok) {

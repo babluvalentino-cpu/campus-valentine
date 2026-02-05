@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ProfileWizard } from "../components/ProfileWizard";
-import { API_BASE } from "../utils/apiBase";
+import { API_BASE, getStoredToken } from "../utils/apiBase";
 
 export function ProfileSetup() {
   const navigate = useNavigate();
@@ -11,10 +11,18 @@ export function ProfileSetup() {
   async function handleComplete(wizardData) {
     try {
       setIsSubmitting(true);
+      const token = getStoredToken();
+      if (!token) {
+        throw new Error("Session expired. Please sign up again.");
+      }
+
       // Extract required fields - backend will use profileData if direct fields missing
       const response = await fetch(`${API_BASE}/api/profile`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`, // Use token from localStorage
+        },
         credentials: "include",
         body: JSON.stringify({
           // Required fields (extract from wizardData if present)

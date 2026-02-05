@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { GeoFence } from "../components/GeoFence.jsx";
 import { getFingerprintHash } from "../utils/fingerprint.js";
-import { API_BASE } from "../utils/apiBase.js";
+import { API_BASE, storeAuthToken } from "../utils/apiBase.js";
 import { useNavigate } from "react-router-dom";
 
 export function Signup() {
@@ -77,6 +77,11 @@ export function Signup() {
 
       // Parse response to check status
       const data = await res.json();
+      // Store token for subsequent requests
+      if (data.token) {
+        storeAuthToken(data.token);
+        console.log("✓ Auth token stored in localStorage");
+      }
       // New users start with pending_profile status, redirect to profile setup
       navigate("/profile-setup");
     } catch (err) {
