@@ -20,3 +20,29 @@ export function storeAuthToken(token) {
 export function clearAuthToken() {
   localStorage.removeItem("auth_token");
 }
+
+// Enhanced fetch wrapper that automatically includes Authorization header if token is stored
+export async function apiFetch(endpoint, options = {}) {
+  const url = `${API_BASE}${endpoint}`;
+  const token = getStoredToken();
+  
+  // Build headers, merging any provided options
+  const headers = {
+    "Content-Type": "application/json",
+    ...options.headers,
+  };
+
+  // Add Authorization header if token exists
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  // Always include credentials for cookie-based auth as fallback
+  const fetchOptions = {
+    ...options,
+    headers,
+    credentials: "include",
+  };
+
+  return fetch(url, fetchOptions);
+}

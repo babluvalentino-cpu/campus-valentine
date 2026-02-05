@@ -1,7 +1,7 @@
 // src/pages/Chat.jsx
 import React, { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { API_BASE } from "../utils/apiBase";
+import { API_BASE, getStoredToken, apiFetch } from "../utils/apiBase";
 
 export function Chat() {
   const { matchId } = useParams();
@@ -30,9 +30,7 @@ export function Chat() {
 
   async function loadCurrentUser() {
     try {
-      const res = await fetch(`${API_BASE}/api/me`, {
-        credentials: "include",
-      });
+      const res = await apiFetch("/api/me");
       if (res.ok) {
         const me = await res.json();
         setCurrentUserId(me.id);
@@ -48,9 +46,7 @@ export function Chat() {
 
   async function loadMessages() {
     try {
-      const res = await fetch(`${API_BASE}/api/chat/${matchId}`, {
-        credentials: "include",
-      });
+      const res = await apiFetch(`/api/chat/${matchId}`);
 
       if (res.status === 401) {
         navigate("/login");
@@ -67,9 +63,7 @@ export function Chat() {
       // Get partner info from matches endpoint
       if (!partner) {
         try {
-          const matchesRes = await fetch(`${API_BASE}/api/matches`, {
-            credentials: "include",
-          });
+          const matchesRes = await apiFetch("/api/matches");
           if (matchesRes.ok) {
             const matches = await matchesRes.json();
             const currentMatch = matches.find((m) => m.id === matchId);
@@ -109,10 +103,8 @@ export function Chat() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/api/chat/${matchId}`, {
+      const res = await apiFetch(`/api/chat/${matchId}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ content: newMessage.trim() }),
       });
 
@@ -146,9 +138,8 @@ export function Chat() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/api/chat/${matchId}/end`, {
+      const res = await apiFetch(`/api/chat/${matchId}/end`, {
         method: "POST",
-        credentials: "include",
       });
 
       if (!res.ok) {
@@ -164,10 +155,8 @@ export function Chat() {
   async function handleReportAndUnmatch() {
     setReporting(true);
     try {
-      const res = await fetch(`${API_BASE}/api/chat/${matchId}/report`, {
+      const res = await apiFetch(`/api/chat/${matchId}/report`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ reason: reportReason }),
       });
 

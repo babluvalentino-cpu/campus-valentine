@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { API_BASE } from "../utils/apiBase";
+import { API_BASE, getStoredToken, apiFetch } from "../utils/apiBase";
 
 export function Admin() {
   const navigate = useNavigate();
@@ -26,7 +26,7 @@ export function Admin() {
     let cancelled = false;
     async function checkAdmin() {
       try {
-        const res = await fetch(`${API_BASE}/api/me`, { credentials: "include" });
+        const res = await apiFetch("/api/me");
         if (cancelled) return;
         if (res.status === 401) {
           setAuthStatus("unauthorized");
@@ -57,7 +57,7 @@ export function Admin() {
   async function fetchUsers() {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/admin/users`, { credentials: "include" });
+      const res = await apiFetch("/api/admin/users");
       if (res.status === 401) {
         setAuthStatus("unauthorized");
         return;
@@ -79,7 +79,7 @@ export function Admin() {
 
   async function fetchReports() {
     try {
-      const res = await fetch(`${API_BASE}/api/admin/reports`, { credentials: "include" });
+      const res = await apiFetch("/api/admin/reports");
       if (res.ok) {
         const data = await res.json();
         setReports(Array.isArray(data) ? data : []);
@@ -94,7 +94,7 @@ export function Admin() {
   // Fetch matched couples
   async function fetchCouples() {
     try {
-      const res = await fetch(`${API_BASE}/api/admin/couples`, { credentials: "include" });
+      const res = await apiFetch("/api/admin/couples");
       if (res.ok) {
         const data = await res.json();
         setCouples(Array.isArray(data) ? data : []);
@@ -128,10 +128,8 @@ export function Admin() {
   async function handleUnmatch(id) {
     if (!confirm("Are you sure you want to break this match? This cannot be undone.")) return;
     try {
-      const res = await fetch(`${API_BASE}/api/admin/unmatch`, {
+      const res = await apiFetch("/api/admin/whitelist", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ user_id: id }),
       });
       if (!res.ok) {
@@ -162,10 +160,8 @@ export function Admin() {
     if (!selectedUserBId) return alert("Please select a partner.");
 
     try {
-      const res = await fetch(`${API_BASE}/api/admin/match`, {
+      const res = await apiFetch("/api/admin/match", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           user_a_id: selectedUserA.id,
           user_b_id: selectedUserBId,
@@ -264,7 +260,7 @@ export function Admin() {
               if (!confirm('Run matching algorithm now? This will attempt to match eligible users.')) return;
               try {
                 setRunMatchingLoading(true);
-                const res = await fetch(`${API_BASE}/api/admin/run-matching`, { method: 'POST', credentials: 'include' });
+                const res = await apiFetch("/api/admin/run-matching", { method: "POST" });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
                   alert(`Run Matching failed: ${data.error || res.statusText}`);

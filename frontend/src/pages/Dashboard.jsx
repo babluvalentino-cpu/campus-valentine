@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { MatchCelebration } from "../components/MatchCelebration";
-import { API_BASE } from "../utils/apiBase";
+import { API_BASE, apiFetch } from "../utils/apiBase";
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -39,9 +39,7 @@ export function Dashboard() {
     async function load() {
       try {
         // 1. Check session & status
-        const meRes = await fetch(`${API_BASE}/api/me`, {
-          credentials: "include",
-        });
+        const meRes = await apiFetch("/api/me");
         if (meRes.status === 401) {
           navigate("/login");
           return;
@@ -59,9 +57,7 @@ export function Dashboard() {
         }
 
         // 2. Fetch matches
-        const res = await fetch(`${API_BASE}/api/matches`, {
-          credentials: "include",
-        });
+        const res = await apiFetch("/api/matches");
         if (!res.ok) {
           throw new Error("Failed to load matches.");
         }
@@ -89,9 +85,8 @@ export function Dashboard() {
 
   async function handleLogout() {
     try {
-      await fetch(`${API_BASE}/api/logout`, {
+      await apiFetch("/api/logout", {
         method: "POST",
-        credentials: "include",
       });
     } catch (e) {
       console.error("Logout error:", e);
