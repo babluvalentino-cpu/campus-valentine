@@ -200,6 +200,10 @@ export default {
       return handleAdminUsers(request, env);
     }
 
+    if (url.pathname === "/api/admin/couples" && request.method === "GET") {
+      return handleAdminCouples(request, env);
+    }
+
     if (url.pathname === "/api/admin/whitelist" && request.method === "POST") {
       return handleAdminWhitelist(request, env);
     }
@@ -620,20 +624,29 @@ async function handleSendMessage(request: Request, env: Env, matchId: string): P
       return jsonResponse({ error: "Cannot send message (Match ended or not found)" }, 403, request);
     }
 
+    // Get sender's username and gender
+    const sender = await env.DB.prepare(
+      "SELECT username, gender FROM Users WHERE id = ?"
+    )
+      .bind(session.id)
+      .first<{ username: string; gender: string | null }>();
+
     // Sanitize message content (remove URLs and profanity)
     const sanitizedContent = sanitizeMessage(content);
 
-    // Insert Message
+    // Insert Message with username and gender
     const msgId = crypto.randomUUID();
     await env.DB.prepare(
-      "INSERT INTO Messages (id, match_id, sender_id, content) VALUES (?, ?, ?, ?)"
+      "INSERT INTO Messages (id, match_id, sender_id, sender_username, sender_gender, content) VALUES (?, ?, ?, ?, ?, ?)"
     )
-      .bind(msgId, matchId, session.id, sanitizedContent)
+      .bind(msgId, matchId, session.id, sender?.username || null, sender?.gender || null, sanitizedContent)
       .run();
 
     return jsonResponse({
       id: msgId,
       sender_id: session.id,
+      sender_username: sender?.username,
+      sender_gender: sender?.gender,
       content: sanitizedContent,
       created_at: new Date().toISOString(),
     }, 201, request);
@@ -905,6 +918,51 @@ async function handleAdminUsers(request: Request, env: Env): Promise<Response> {
   } catch (err) {
     console.error("Admin users error:", err);
     return jsonResponse({ error: "Error fetching users" }, 500, request);
+  }
+}
+
+async function handleAdminCouples(request: Request, env: Env): Promise<Response> {
+  const result = await requireAdminSession(request, env);
+  if ("status" in result) {
+    return jsonResponse(
+      { error: result.status === 401 ? "Unauthorized" : "Forbidden" },
+      result.status,
+      request
+    );
+  }
+
+  try {
+    const couples = await env.DB.prepare(
+      `SELECT 
+        m.id as match_id,
+        m.created_at as match_created_at,
+        u1.id as user_a_id,
+        u1.username as user_a_username,
+        u1.gender as user_a_gender,
+        u2.id as user_b_id,
+        u2.username as user_b_username,
+        u2.gender as user_b_gender
+       FROM Matches m
+       JOIN Users u1 ON m.user_a_id = u1.id
+       JOIN Users u2 ON m.user_b_id = u2.id
+       WHERE m.status = 'active'
+       ORDER BY m.created_at DESC`
+    )
+      .all<{
+        match_id: string;
+        match_created_at: string;
+        user_a_id: string;
+        user_a_username: string;
+        user_a_gender: string | null;
+        user_b_id: string;
+        user_b_username: string;
+        user_b_gender: string | null;
+      }>();
+
+    return jsonResponse(couples.results || [], 200, request);
+  } catch (err) {
+    console.error("Admin couples error:", err);
+    return jsonResponse({ error: "Error fetching couples" }, 500, request);
   }
 }
 

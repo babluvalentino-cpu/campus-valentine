@@ -67,6 +67,8 @@ CREATE TABLE Messages (
   id TEXT PRIMARY KEY,                     -- UUID v4
   match_id TEXT NOT NULL,
   sender_id TEXT NOT NULL,
+  sender_username TEXT,                   -- Store sender's username for easy reference
+  sender_gender TEXT,                     -- Store sender's gender for easy reference
   content TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
 
