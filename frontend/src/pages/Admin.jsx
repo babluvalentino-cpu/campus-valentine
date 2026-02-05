@@ -11,6 +11,7 @@ export function Admin() {
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [runMatchingLoading, setRunMatchingLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("users"); // "users" or "couples"
 
   // Force Match Modal State
@@ -258,6 +259,31 @@ export function Admin() {
           <button onClick={() => { fetchUsers(); fetchCouples(); fetchReports(); }} className="text-sm bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded border border-slate-700 transition-colors">
             ↻ Refresh Data
           </button>
+          <button
+            onClick={async () => {
+              if (!confirm('Run matching algorithm now? This will attempt to match eligible users.')) return;
+              try {
+                setRunMatchingLoading(true);
+                const res = await fetch(`${API_BASE}/api/admin/run-matching`, { method: 'POST', credentials: 'include' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                  alert(`Run Matching failed: ${data.error || res.statusText}`);
+                } else {
+                  alert('Run Matching started successfully. ' + (data.result ? String(data.result) : ''));
+                  fetchUsers();
+                  fetchCouples();
+                }
+              } catch (e) {
+                alert('Run Matching error: ' + e.message);
+              } finally {
+                setRunMatchingLoading(false);
+              }
+            }}
+            className="text-sm bg-pink-600 hover:bg-pink-500 px-4 py-2 rounded ml-3 text-white border border-pink-500 transition-colors"
+            disabled={runMatchingLoading}
+          >
+            {runMatchingLoading ? 'Running…' : 'Run Matcher'}
+          </button>
         </header>
 
         {/* Tab Navigation */}
@@ -358,7 +384,7 @@ export function Admin() {
                     <td className="px-6 py-4">
                       <div className="font-semibold text-white text-base">{u.username}</div>
                       <div className="text-xs text-slate-500">
-                        {u.gender} • {u.year === 5 ? "5+" : u.year} yr
+                        {u.gender || '—'} • {u.year === 5 ? "5+" : u.year} yr
                       </div>
                     </td>
                     <td className="px-6 py-4">
