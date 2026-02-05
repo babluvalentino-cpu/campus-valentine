@@ -6,10 +6,12 @@ export function Admin() {
   const navigate = useNavigate();
   const [authStatus, setAuthStatus] = useState("pending"); // "pending" | "admin" | "forbidden" | "unauthorized"
   const [users, setUsers] = useState([]);
+  const [couples, setCouples] = useState([]);
   const [reports, setReports] = useState([]);
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [activeTab, setActiveTab] = useState("users"); // "users" or "couples"
 
   // Force Match Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -40,6 +42,7 @@ export function Admin() {
         }
         setAuthStatus("admin");
         fetchUsers();
+        fetchCouples();
         fetchReports();
       } catch (e) {
         if (!cancelled) setAuthStatus("unauthorized");
@@ -84,6 +87,21 @@ export function Admin() {
       }
     } catch (e) {
       setReports([]);
+    }
+  }
+
+  // Fetch matched couples
+  async function fetchCouples() {
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/couples`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setCouples(Array.isArray(data) ? data : []);
+      } else {
+        setCouples([]);
+      }
+    } catch (e) {
+      setCouples([]);
     }
   }
 
@@ -237,13 +255,37 @@ export function Admin() {
             <h1 className="text-3xl font-bold text-white">Admin Dashboard</h1>
             <p className="text-slate-400 text-sm">Manage users, whitelist, and manual matches.</p>
           </div>
-          <button onClick={() => { fetchUsers(); fetchReports(); }} className="text-sm bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded border border-slate-700 transition-colors">
+          <button onClick={() => { fetchUsers(); fetchCouples(); fetchReports(); }} className="text-sm bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded border border-slate-700 transition-colors">
             ↻ Refresh Data
           </button>
         </header>
 
+        {/* Tab Navigation */}
+        <div className="flex gap-4 mb-6 border-b border-slate-800">
+          <button
+            onClick={() => setActiveTab("users")}
+            className={`px-4 py-3 font-semibold text-sm transition-colors ${
+              activeTab === "users"
+                ? "text-pink-500 border-b-2 border-pink-500"
+                : "text-slate-400 hover:text-slate-300"
+            }`}
+          >
+            All Users
+          </button>
+          <button
+            onClick={() => setActiveTab("couples")}
+            className={`px-4 py-3 font-semibold text-sm transition-colors ${
+              activeTab === "couples"
+                ? "text-pink-500 border-b-2 border-pink-500"
+                : "text-slate-400 hover:text-slate-300"
+            }`}
+          >
+            Matched Couples ({couples.length})
+          </button>
+        </div>
+
         {/* Reported users (safety) */}
-        {reports.length > 0 && (
+        {activeTab === "users" && reports.length > 0 && (
           <div className="bg-amber-900/20 border border-amber-800 rounded-xl p-4 mb-6">
             <h2 className="text-lg font-semibold text-amber-400 mb-3">⚠️ Reported Users</h2>
             <p className="text-xs text-slate-400 mb-3">Users reported by others in chat. Review and consider banning if needed.</p>
@@ -272,30 +314,33 @@ export function Admin() {
           </div>
         )}
 
-        {/* Stats & Filter Bar */}
-        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 mb-6 flex flex-col md:flex-row gap-4 justify-between items-center">
-          <div className="flex gap-4 text-sm font-medium">
-             <div className="px-3 py-1 bg-slate-800 rounded">Total: <span className="text-white">{users.length}</span></div>
-             <div className="px-3 py-1 bg-green-900/30 text-green-400 rounded border border-green-900">Matched: {users.filter(u => u.status === 'matched').length}</div>
-             <div className="px-3 py-1 bg-blue-900/30 text-blue-400 rounded border border-blue-900">Pending: {users.filter(u => u.status === 'pending_match').length}</div>
-          </div>
+        {/* ===== ALL USERS TAB ===== */}
+        {activeTab === "users" && (
+          <>
+            {/* Stats & Filter Bar */}
+            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 mb-6 flex flex-col md:flex-row gap-4 justify-between items-center">
+              <div className="flex gap-4 text-sm font-medium">
+                 <div className="px-3 py-1 bg-slate-800 rounded">Total: <span className="text-white">{users.length}</span></div>
+                 <div className="px-3 py-1 bg-green-900/30 text-green-400 rounded border border-green-900">Matched: {users.filter(u => u.status === 'matched').length}</div>
+                 <div className="px-3 py-1 bg-blue-900/30 text-blue-400 rounded border border-blue-900">Pending: {users.filter(u => u.status === 'pending_match').length}</div>
+              </div>
 
-          <input
-            type="text"
-            placeholder="Search by username..."
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="p-2 rounded bg-slate-950 border border-slate-700 w-full md:w-64 focus:border-pink-500 outline-none"
-          />
-        </div>
+              <input
+                type="text"
+                placeholder="Search by username..."
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                className="p-2 rounded bg-slate-950 border border-slate-700 w-full md:w-64 focus:border-pink-500 outline-none"
+              />
+            </div>
 
-        {/* Users Table */}
-        <div className="overflow-x-auto border border-slate-800 rounded-xl shadow-lg">
-          <table className="w-full text-sm text-left text-slate-400">
-            <thead className="text-xs text-slate-200 uppercase bg-slate-900 border-b border-slate-800">
-              <tr>
-                <th className="px-6 py-4">User Details</th>
-                <th className="px-6 py-4">Status</th>
+            {/* Users Table */}
+            <div className="overflow-x-auto border border-slate-800 rounded-xl shadow-lg">
+              <table className="w-full text-sm text-left text-slate-400">
+                <thead className="text-xs text-slate-200 uppercase bg-slate-900 border-b border-slate-800">
+                  <tr>
+                    <th className="px-6 py-4">User Details</th>
+                    <th className="px-6 py-4">Status</th>
                 <th className="px-6 py-4">Whitelist</th>
                 <th className="px-6 py-4 text-right">Actions</th>
               </tr>
@@ -364,7 +409,71 @@ export function Admin() {
               )}
             </tbody>
           </table>
-        </div>
+            </div>
+          </>
+        )}
+
+        {/* ===== MATCHED COUPLES TAB ===== */}
+        {activeTab === "couples" && (
+          <>
+            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 mb-6">
+              <p className="text-sm text-slate-400">Showing {couples.length} active matched couple pairs.</p>
+            </div>
+
+            {couples.length === 0 ? (
+              <div className="text-center py-12 bg-slate-900 rounded-xl border border-slate-800">
+                <p className="text-slate-400 text-sm italic">No matched couples yet.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {couples.map((couple) => (
+                  <div key={couple.match_id} className="bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-slate-700 transition-colors">
+                    {/* Match Header */}
+                    <div className="mb-4 pb-3 border-b border-slate-800">
+                      <p className="text-xs text-slate-500 mb-1">Match ID: {couple.match_id.slice(0, 8)}...</p>
+                      <p className="text-xs text-slate-600">Since {new Date(couple.match_created_at).toLocaleDateString()}</p>
+                    </div>
+
+                    {/* User A */}
+                    <div className="mb-4 p-3 bg-slate-950 rounded border border-slate-800">
+                      <p className="font-semibold text-white text-base">{couple.user_a_username}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="inline-block px-2 py-1 bg-blue-900/30 text-blue-300 text-xs rounded border border-blue-900">
+                          {couple.user_a_gender || 'Not Set'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Divider */}
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="flex-1 h-px bg-slate-800"></div>
+                      <span className="text-pink-400 font-semibold text-xs">💕</span>
+                      <div className="flex-1 h-px bg-slate-800"></div>
+                    </div>
+
+                    {/* User B */}
+                    <div className="p-3 bg-slate-950 rounded border border-slate-800">
+                      <p className="font-semibold text-white text-base">{couple.user_b_username}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="inline-block px-2 py-1 bg-purple-900/30 text-purple-300 text-xs rounded border border-purple-900">
+                          {couple.user_b_gender || 'Not Set'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Action Button */}
+                    <button
+                      onClick={() => handleUnmatch(couple.user_a_id)}
+                      className="w-full mt-4 px-3 py-2 text-xs bg-red-900/20 border border-red-900 hover:bg-red-900/40 text-red-400 rounded transition-colors font-medium"
+                    >
+                      Break Match
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       {/* --- MODAL: FORCE MATCH --- */}
