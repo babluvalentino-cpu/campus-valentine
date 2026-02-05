@@ -289,10 +289,13 @@ async function handleSignup(request: Request, env: Env): Promise<Response> {
 
     // Create session cookie
     const token = await createSessionToken(env, { id: userId, isAdmin: false });
+    console.log("Token created successfully for user:", userId);
     const corsHeadersDynamic = getCorsHeaders(request);
+    const authCookie = createAuthCookie(token);
+    console.log("Auth cookie created:", { cookieLength: authCookie.length });
     const headers = new Headers({
       "Content-Type": "application/json",
-      "Set-Cookie": createAuthCookie(token),
+      "Set-Cookie": authCookie,
       ...corsHeadersDynamic,
     });
 

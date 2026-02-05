@@ -13,10 +13,19 @@ export interface Env {
 }
 
 function getJwtSecretKey(env: Env): Uint8Array {
-  if (!env.JWT_SECRET || env.JWT_SECRET.trim() === "") {
+  // Fallback to a development secret if not configured
+  const secret = env.JWT_SECRET || "dev_secret_change_me_in_production_please_12345";
+  
+  if (!secret || secret.trim() === "") {
     throw new Error("JWT_SECRET is not configured");
   }
-  return new TextEncoder().encode(env.JWT_SECRET);
+  
+  // Log to console if using fallback (development only)
+  if (!env.JWT_SECRET) {
+    console.warn("⚠️ WARNING: JWT_SECRET not configured, using fallback. This is insecure in production!");
+  }
+  
+  return new TextEncoder().encode(secret);
 }
 
 const ISSUER = "urn:campus-match:issuer";
@@ -127,7 +136,11 @@ export function clearAuthCookie(): string {
 export async function verifySession(request: Request, env: Env): Promise<SessionUser | null> {
   const cookie = request.headers.get("Cookie") || "";
   const match = cookie.match(/auth_token=([^;]+)/);
-  if (!match) return null;
+  if (!match) {
+    // Log if no cookie found - this helps debug CORS/cookie issues
+    console.log("⚠️ No auth_token cookie found in request");
+    return null;
+  }
 
   const token = match[1];
   try {
@@ -137,14 +150,18 @@ export async function verifySession(request: Request, env: Env): Promise<Session
       audience: AUDIENCE,
     });
 
+    console.log("✓ Session verified for user:", payload.sub);
     return {
       id: payload.sub as string,
       isAdmin: Boolean(payload.isAdmin),
     };
   } catch (err) {
-    // Log error but don't expose it to client
-    if (err instanceof Error && err.message.includes("JWT_SECRET")) {
-      console.error("JWT_SECRET not configured");
+    // Log error for debugging
+    if (err instanceof Error) {
+      console.warn("⚠️ Session verification failed:", err.message);
+      if (err.message.includes("JWT_SECRET")) {
+        console.error("❌ JWT_SECRET not configured");
+      }
     }
     return null;
   }

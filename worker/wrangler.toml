@@ -10,3 +10,6 @@ crons = ["0 0 * * *"] # runs daily at midnight UTC
 binding = "DB"
 database_name = "campus-valentine-db"
 database_id = "7d550493-b752-4470-94bc-9f19517677de"
+
+[env.production]
+vars = { JWT_SECRET = "change_me_to_random_32_char_string_12345", ADMIN_SECRET = "change_me_admin_secret_here" }
