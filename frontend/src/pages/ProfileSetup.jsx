@@ -1,35 +1,37 @@
 // src/pages/ProfileSetup.jsx
-import React from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ProfileWizard } from "../components/ProfileWizard";
 import { API_BASE } from "../utils/apiBase";
 
 export function ProfileSetup() {
   const navigate = useNavigate();
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleComplete(wizardData) {
     try {
+      setIsSubmitting(true);
       // Extract required fields - backend will use profileData if direct fields missing
       const response = await fetch(`${API_BASE}/api/profile`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
           // Required fields (extract from wizardData if present)
           gender: wizardData.gender || "",
           seeking: wizardData.seeking || "",
           interests: wizardData.interests || [],
           
           // Phase-3 fields
-        intent: wizardData.intent,
-        year: wizardData.year,
+          intent: wizardData.intent,
+          year: wizardData.year,
           residence: wizardData.residence,
-        bio: wizardData.bio,
+          bio: wizardData.bio,
           
           // Full wizard data for profile_data JSON
           profileData: wizardData,
-      }),
-    });
+        }),
+      });
 
       if (!response.ok) {
         let errorMessage = "Profile update failed";
@@ -43,9 +45,14 @@ export function ProfileSetup() {
         throw new Error(errorMessage);
       }
 
-    navigate("/dashboard");
+      // Wait a moment for the browser to finalize the session before redirecting
+      // This ensures cookies are fully persisted
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      navigate("/dashboard");
     } catch (err) {
       console.error("Profile setup error:", err);
+      setIsSubmitting(false);
       alert(err.message || "Failed to save profile. Please try again.");
     }
   }
