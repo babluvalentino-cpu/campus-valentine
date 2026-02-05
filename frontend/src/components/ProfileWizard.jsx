@@ -53,7 +53,7 @@ const SPORTS_LABELS = {
 };
 
 export function ProfileWizard({ onComplete }) {
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(0);
   const [error, setError] = useState("");
 
   const [data, setData] = useState({
