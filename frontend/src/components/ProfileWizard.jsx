@@ -9,6 +9,7 @@ import React, { useState } from "react";
  *
  * `formData` structure (you can send this JSON to backend as profile_data):
  * {
+ *   gender: 'male' | 'female',
  *   intent: 'relationship' | 'friendship',
  *   year: 1|2|3|4|5,
  *   residence: 'day_scholar' | 'hosteller',
@@ -120,7 +121,6 @@ export function ProfileWizard({ onComplete }) {
     // Basic validation per step
     if (currentStep === 0) {
       if (!data.gender) return "Please select your gender.";
-      if (!data.seeking) return "Please select who you're seeking.";
       if (!data.year) return "Please select your current year.";
     } else if (currentStep === 1) {
       if (!isRelationship && !isFriendship) {
@@ -188,7 +188,6 @@ export function ProfileWizard({ onComplete }) {
 
     const finalData = {
       gender: data.gender,
-      seeking: data.seeking,
       intent: data.intent === "relationship" ? "relationship" : "friendship",
       year: parseInt(String(data.year), 10),
       residence: data.residence,
@@ -254,7 +253,7 @@ export function ProfileWizard({ onComplete }) {
 
   const stepLabel =
     step === 0
-      ? "Step 0 · Gender & Seeking"
+      ? "Step 0 · Gender and Year"
       : step === 1
       ? "Step 1 · Basics"
       : step === 2
@@ -349,30 +348,6 @@ function Step0GenderSeeking({ data, update }) {
             value="female"
             checked={data.gender === "female"}
             onChange={() => update("gender", "female")}
-          />
-        </div>
-      </div>
-
-      <div>
-        <p className="mb-1">Seeking?</p>
-        <div className="flex flex-wrap gap-3 text-xs">
-          <RadioPill
-            label="Male"
-            value="male"
-            checked={data.seeking === "male"}
-            onChange={() => update("seeking", "male")}
-          />
-          <RadioPill
-            label="Female"
-            value="female"
-            checked={data.seeking === "female"}
-            onChange={() => update("seeking", "female")}
-          />
-          <RadioPill
-            label="All"
-            value="all"
-            checked={data.seeking === "all"}
-            onChange={() => update("seeking", "all")}
           />
         </div>
       </div>
