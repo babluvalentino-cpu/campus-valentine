@@ -1088,7 +1088,7 @@ async function handleAdminUnmatch(request: Request, env: Env): Promise<Response>
       // Requeue the other user (if they exist and aren't already in another match)
       const otherUserId = match.user_a_id === body.user_id ? match.user_b_id : match.user_a_id;
       await env.DB.prepare(
-        "UPDATE Users SET status = 'requeuing' WHERE id = ? AND status = 'matched'"
+        "UPDATE Users SET status = 'requeuing' WHERE id = ?"
       )
         .bind(otherUserId)
         .run();
@@ -1096,7 +1096,7 @@ async function handleAdminUnmatch(request: Request, env: Env): Promise<Response>
 
     // Requeue the target user
     await env.DB.prepare(
-      "UPDATE Users SET status = 'requeuing' WHERE id = ? AND status = 'matched'"
+      "UPDATE Users SET status = 'requeuing' WHERE id = ?"
     )
       .bind(body.user_id)
       .run();
