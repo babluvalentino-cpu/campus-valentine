@@ -12,13 +12,14 @@ import { computeGeoVerified } from "./geofence";
 import { runMatchingAlgorithm } from "./matchingAlgorithm";
 import { sanitizeMessage } from "./wordFilter";
 import { generateSmartIcebreaker } from "./icebreaker";
-// Allow any Cloudflare Pages origin (*.pages.dev) so production and previews work
+// Allow any secure origin by echoing back the request Origin when present.
+// This keeps Cloudflare Pages previews and new Pages domains (like vimatch.pages.dev)
+// working without needing to update static allowlists.
 function getCorsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("Origin") || "";
-  const allowedOrigin =
-    origin && origin.startsWith("https://") && origin.endsWith(".pages.dev")
-      ? origin
-      : "https://campus-valentine.pages.dev";
+  // If an Origin header exists and uses HTTPS, echo it back. Otherwise fall back to the
+  // legacy campus-valentine pages domain to avoid breaking older deployments.
+  const allowedOrigin = origin && origin.startsWith("https://") ? origin : "https://campus-valentine.pages.dev";
 
   return {
     "Access-Control-Allow-Origin": allowedOrigin,
