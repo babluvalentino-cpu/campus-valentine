@@ -20,7 +20,6 @@ import React, { useState } from "react";
  *   gaming: 'yes' | 'no',
  *   sports: string[],
  *   vacation: 'mountains' | 'beaches',
- *   lookingFor?: 'long_term' | 'short_term',
  *   idealDate?: 'coffee' | 'movie' | 'dinner',
  *   activity?: 'clubs_party' | 'netflix_chill' | 'gym',
  *   trait: 'humor' | 'intelligence' | 'comfort',
@@ -122,11 +121,11 @@ export function ProfileWizard({ onComplete }) {
     if (currentStep === 0) {
       if (!data.gender) return "Please select your gender.";
       if (!data.seeking) return "Please select who you're seeking.";
+      if (!data.year) return "Please select your current year.";
     } else if (currentStep === 1) {
       if (!isRelationship && !isFriendship) {
         return "Please select what you're looking for.";
       }
-      if (!data.year) return "Please select your current year.";
       if (!data.residence) return "Please select your residence status.";
       if (!data.dietary) return "Please select your dietary preference.";
       if (!data.instrument) return "Please answer if you play an instrument.";
@@ -140,7 +139,6 @@ export function ProfileWizard({ onComplete }) {
       if (!data.vacation) return "Please pick a vacation preference.";
       // sports optional, but we allow empty
     } else if (currentStep === 4 && isRelationship) {
-      if (!data.lookingFor) return "Please choose what you're looking for.";
       if (!data.idealDate) return "Please pick an ideal date.";
       if (!data.activity) return "Please pick a preferred activity.";
     } else if (currentStep === 5) {
@@ -206,7 +204,6 @@ export function ProfileWizard({ onComplete }) {
       sports: data.sports,
       vacation: data.vacation,
 
-      lookingFor: isRelationship ? data.lookingFor : undefined,
       idealDate: isRelationship ? data.idealDate : undefined,
       activity: isRelationship ? data.activity : undefined,
 
@@ -353,12 +350,6 @@ function Step0GenderSeeking({ data, update }) {
             checked={data.gender === "female"}
             onChange={() => update("gender", "female")}
           />
-          <RadioPill
-            label="Other"
-            value="other"
-            checked={data.gender === "other"}
-            onChange={() => update("gender", "other")}
-          />
         </div>
       </div>
 
@@ -378,17 +369,26 @@ function Step0GenderSeeking({ data, update }) {
             onChange={() => update("seeking", "female")}
           />
           <RadioPill
-            label="Other"
-            value="other"
-            checked={data.seeking === "other"}
-            onChange={() => update("seeking", "other")}
-          />
-          <RadioPill
             label="All"
             value="all"
             checked={data.seeking === "all"}
             onChange={() => update("seeking", "all")}
           />
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-1">Current year?</p>
+        <div className="flex flex-wrap gap-2 text-xs">
+          {["1", "2", "3", "4", "5"].map((y) => (
+            <RadioPill
+              key={y}
+              label={y === "5" ? "5+" : `${y} year`}
+              value={y}
+              checked={data.year === y}
+              onChange={() => update("year", y)}
+            />
+          ))}
         </div>
       </div>
     </div>
@@ -413,21 +413,6 @@ function Step1Basics({ data, update }) {
             checked={data.intent === "friendship"}
             onChange={() => update("intent", "friendship")}
           />
-        </div>
-      </div>
-
-      <div>
-        <p className="mb-1">Current year?</p>
-        <div className="flex flex-wrap gap-2 text-xs">
-          {["1", "2", "3", "4", "5"].map((y) => (
-            <RadioPill
-              key={y}
-              label={y === "5" ? "5+" : `${y} year`}
-              value={y}
-              checked={data.year === y}
-              onChange={() => update("year", y)}
-            />
-          ))}
         </div>
       </div>
 
@@ -650,24 +635,6 @@ function Step3Hobbies({ data, update, toggleSport }) {
 function Step4DatingStyle({ data, update }) {
   return (
     <div className="space-y-4 text-sm">
-      <div>
-        <p className="mb-1">Looking for?</p>
-        <div className="flex flex-wrap gap-3 text-xs">
-          <RadioPill
-            label="Long Term"
-            value="long_term"
-            checked={data.lookingFor === "long_term"}
-            onChange={() => update("lookingFor", "long_term")}
-          />
-          <RadioPill
-            label="Short Term"
-            value="short_term"
-            checked={data.lookingFor === "short_term"}
-            onChange={() => update("lookingFor", "short_term")}
-          />
-        </div>
-      </div>
-
       <div>
         <p className="mb-1">Ideal date?</p>
         <div className="flex flex-wrap gap-3 text-xs">
