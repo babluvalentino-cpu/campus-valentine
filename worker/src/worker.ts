@@ -135,6 +135,11 @@ export default {
 
     const url = new URL(request.url);
 
+    // Simple root response for tests and quick sanity checks
+    if (url.pathname === "/") {
+      return new Response("Hello World!", { headers: { "Content-Type": "text/plain" } });
+    }
+
     if (url.pathname === "/api/health") {
       return new Response(JSON.stringify({ ok: true }), {
         headers: { "Content-Type": "application/json", ...getCorsHeadersFallback() },

@@ -128,10 +128,10 @@ export function Admin() {
   async function handleUnmatch(id) {
     if (!confirm("Are you sure you want to break this match? This cannot be undone.")) return;
     try {
-      const res = await apiFetch("/api/admin/whitelist", {
-        method: "POST",
-        body: JSON.stringify({ user_id: id }),
-      });
+        const res = await apiFetch("/api/admin/unmatch", {
+          method: "POST",
+          body: JSON.stringify({ user_id: id }),
+        });
       if (!res.ok) {
         let errorMsg = "Failed to unmatch";
         try {
@@ -144,6 +144,9 @@ export function Admin() {
       }
       fetchUsers(); // Refresh
       alert("Match broken successfully.");
+
+      // Ensure couples list also refreshes so the Matched Couples tab updates
+      fetchCouples();
     } catch (e) {
       alert(`Unmatch Error: ${e.message}`);
     }
