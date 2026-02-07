@@ -312,13 +312,6 @@ export function Dashboard() {
           </div>
 
         </div>
-        
-        {/* Disclaimer (merged from friend's changes) */}
-        <div className="mt-6 text-center">
-          <p className="text-xs text-slate-500">
-            Disclaimer: This dashboard is for the ViMatch event. Use responsibly and do not share credentials.
-          </p>
-        </div>
 
         <Footer />
       </main>
