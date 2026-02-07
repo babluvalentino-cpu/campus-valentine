@@ -268,7 +268,7 @@ export function ProfileWizard({ onComplete }) {
 
   const showBack = step > 0;
   const showNext = step < 5 && !(step === 3 && isFriendship);
-  const showFinish = step === 5 || (step === 3 && isFriendship);
+  const showFinish = step === 5;
 
   return (
     <div className="w-full max-w-xl bg-slate-900 p-6 rounded-xl shadow text-white">
