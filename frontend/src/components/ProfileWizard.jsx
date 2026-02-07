@@ -267,7 +267,7 @@ export function ProfileWizard({ onComplete }) {
       : "Step 5 · Preferences";
 
   const showBack = step > 0;
-  const showNext = step < 5 && !(step === 3 && isFriendship);
+  const showNext = step < 5
   const showFinish = step === 5;
 
   return (
