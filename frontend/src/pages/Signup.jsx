@@ -16,7 +16,6 @@ export function Signup() {
 
   useEffect(() => {
     getFingerprintHash().then(setFingerprint).catch(() => {
-      // fallback handled in util
     });
   }, []);
 
@@ -33,7 +32,6 @@ export function Signup() {
       return;
     }
 
-    // Check if API_BASE is configured
     if (!API_BASE) {
       setError("API configuration error. Please check console for details.");
       console.error("API_BASE is not set! Set VITE_API_BASE in .env file and rebuild.");
@@ -50,7 +48,7 @@ export function Signup() {
           username: username.trim(),
           password,
           fingerprintHash: fingerprint,
-          clientCoords: coords, // can be null
+          clientCoords: coords,
         }),
       });
 
@@ -75,14 +73,11 @@ export function Signup() {
         throw new Error(errorMessage);
       }
 
-      // Parse response to check status
       const data = await res.json();
-      // Store token for subsequent requests
       if (data.token) {
         storeAuthToken(data.token);
         console.log("✓ Auth token stored in localStorage");
       }
-      // New users start with pending_profile status, redirect to profile setup
       navigate("/profile-setup");
     } catch (err) {
       console.error(err);
@@ -124,6 +119,15 @@ export function Signup() {
           <GeoFence onCoordsChange={setCoords} />
 
           {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
+
+          <div className="mb-6 p-4 bg-red-900/30 border-l-4 border-red-500 rounded-r-lg">
+            <p className="text-red-200 text-sm leading-relaxed">
+              <span className="block font-bold text-red-100 mb-1 uppercase tracking-wide">
+                ⚠️ Do not lose your password and username
+              </span>
+              We cannot help you recover your account if you do.
+            </p>
+          </div>
 
           <button
             type="submit"
