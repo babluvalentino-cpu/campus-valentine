@@ -18,8 +18,8 @@ import { generateSmartIcebreaker } from "./icebreaker";
 function getCorsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("Origin") || "";
   // If an Origin header exists and uses HTTPS, echo it back. Otherwise fall back to the
-  // legacy campus-valentine pages domain to avoid breaking older deployments.
-  const allowedOrigin = origin && origin.startsWith("https://") ? origin : "https://campus-valentine.pages.dev";
+  // current vimatch pages domain.
+  const allowedOrigin = origin && origin.startsWith("https://") ? origin : "https://vimatch.pages.dev";
 
   return {
     "Access-Control-Allow-Origin": allowedOrigin,
@@ -31,7 +31,7 @@ function getCorsHeaders(request: Request): Record<string, string> {
 
 function getCorsHeadersFallback(): Record<string, string> {
   return {
-    "Access-Control-Allow-Origin": "https://campus-valentine.pages.dev",
+    "Access-Control-Allow-Origin": "https://vimatch.pages.dev",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Credentials": "true",
