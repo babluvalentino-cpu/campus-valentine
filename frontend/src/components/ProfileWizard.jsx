@@ -151,10 +151,12 @@ export function ProfileWizard({ onComplete }) {
   }
 
   function goNext() {
-    const message = validateStep(step);
-    if (message) {
-      setError(message);
-      return;
+    if(step!=5){
+      const message = validateStep(step);
+      if (message) {
+        setError(message);
+        return;
+      }
     }
     setError("");
 
