@@ -15,7 +15,7 @@ export function Dashboard() {
   const [timeLeft, setTimeLeft] = useState(calculateTimeLeft());
 
   function calculateTimeLeft() {
-    const targetDate = new Date("2026-02-14T00:00:00");
+    const targetDate = new Date("2026-02-13T14:30:00Z");
     const now = new Date();
     const difference = targetDate - now;
 
